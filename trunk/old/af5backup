@@ -1,0 +1,1027 @@
+#!/bin/sh
+#############################################################
+# Das große Backupskript für zu Hause.
+# Die fünfte Inkarnation...
+#############################################################
+# Settings & Lock
+#############################################################
+DATE=`date +%Y%m%d%H%M%S`
+START=`date +%s`
+BASE=`basename $0 .sh`
+TMP=/tmp/$BASE.$$
+#date 1>&2
+logger -s -puser.info -t$BASE.$$ started
+HOST=`hostname`
+#############################################################
+# main configuration
+#############################################################
+MOUNTDIR=/backup/mount1
+MOUNTDIR2=/backup/mount2
+MAXPROC=20
+COMMITEVERY=1000
+SLEEP=10
+#############################################################
+TODIR=$MOUNTDIR/af5backup.dir
+OLDDIR=$TODIR/old
+NAMELIST=$TODIR/af5backup.names
+KAPUTT=$OLDDIR/$BASE.$DATE.$$.kaputt
+LOSTDIR=/tmp/lost
+LOSTLIST=$OLDDIR/$BASE.$DATE.$$.lost
+ADDED=$OLDDIR/$BASE.$DATE.$$.added
+TRASHDIR=/tmp/trash
+TRASH=$TRASHDIR/$BASE.$DATE.$$.trash
+MAILTO="alexander.franz.1411@gmail.com"
+#############################################################
+mkdir -p $TRASHDIR
+#############################################################
+# Backup, awk-Teil
+#############################################################
+cat <<EOF > $TMP.backup.awk
+BEGIN{
+    #########################################################
+    # more configuration
+    #########################################################
+    no_bz["Zip"]   = 1;
+    no_bz["gzip"]  = 1;
+    no_bz["bzip2"] = 1;
+    no_bz["nef"]   = 1;
+    no_bz["MP3"]   = 1;
+    no_bz["FLAC"]  = 1;
+
+    no_no["/[.]thumbnails/"] = 1;
+    no_no["/firefox/.*/Cache/"] = 1;
+    no_no["/Trash/"] = 1;
+    no_no["/xtest/"] = 1;
+    no_no["/pagefile.sys\$"] = 1;
+    #########################################################
+    if( ENVIRON["FORCE"] == "true" ){
+        print "Force mode."
+        force=1
+    }
+    if( ENVIRON["AF5_DEBUG"] == "true" ){
+        print "Debug mode."
+        debug=1
+    }
+    num_input     = 0;
+    num_filtered  = 0;
+    num_identical = 0;
+    num_equal     = 0;
+    num_bz        = 0;
+    num_cp        = 0;
+    num_no_bz     = 0;
+    num_no_cp     = 0;
+    num_commit    = 0;
+
+    readnamelist("$NAMELIST");    
+}
+{
+    num_input++;
+    for( i in no_no )
+        if( \$0 ~ i ){
+            num_filtered++;
+            next;
+        }
+    size = filesize( \$0 );
+    md5  = filemd5(  \$0 );
+    crc  = filecrc(  \$0 );
+    # Wenn identische Datei unter diesem Namen schon gesichert => kein Backup.
+    if( force || map_srcname_md5[\$0 ";" md5] != 1 ) { 
+        dobackup(\$0,size,md5,crc);
+    } else {
+        num_identical++; 
+        if( debug ) { 
+            printf("File %s already backed up identically.\n",\$0);
+        }
+    }
+}
+END{
+    printf("%8d Files processed.\n",num_input);
+    printf("%8d Files filtered out.\n",num_filtered);
+    printf("%8d Files already backed up from same position.\n",num_identical);
+    printf("%8d Files already backed up from different position.\n",num_equal);
+    printf("%8d Files actually backed up (bzipped).\n",num_bz);
+    printf("%8d Files already found (bzipped).\n",num_no_bz);
+    printf("%8d Files actually backed up (copied).\n",num_cp);    
+    printf("%8d Files already found (copied).\n",num_no_cp);
+}
+function dobackup( srcname,size,md5,crc   ,l_tgtname ){
+    num_commit++;
+    if( ! force && length(map_md5_size[md5]) > 0 ){
+        if( size != map_md5_size[md5] ){
+            printf("Collision size %s %s %s\n",md5,size,map_md5_size[md5]);
+        }else{
+            if( length( map_md5_crc[md5]) == 0 ){
+                printf("Missing crc %s\n",md5 );
+            } else if( crc != map_md5_crc[md5] ){
+                printf("Collision crc %s %s %s\n",md5,crc,map_md5_crc[md5]);
+            } else {
+                if( debug ) printf("File %s already backed up from different place.\n",srcname);   
+                map_srcname_md5[srcname ";" md5] = 1;
+                printf("%s;%s;%s;%s\n",md5,size,crc,srcname) >> "$ADDED";
+                num_equal++;
+            }
+        }
+    } else {
+        if( debug ) printf("Backing up %s\n   size %s\n   as   %s\n   ",srcname,size,md5); 
+
+        map_srcname_md5[srcname ";" md5]  = 1;
+        printf("%s;%s;%s;%s\n",md5,size,crc,srcname) >> "$ADDED";
+        map_md5_size[md5]         = size;
+        map_md5_crc[md5]          = crc;
+
+        tname = tgtname(md5);
+        if( size < 100 ) {
+            docp( srcname,size,tname );
+        } else {
+            if( no_bz[filetype(srcname)] == 1 ){ 
+                docp( srcname,size,tname );
+            } else {
+                tname = tname ".bz2";
+                dobz( srcname, tname );
+            }
+        }
+    } 
+}
+function dobz( srcname,tgtname,   l_cmd,l_num,l_tgtsize,l_testsize ){
+    l_tgtsize = filesize(tgtname); 
+    if( l_tgtsize == 0 ){
+        num_bz++;
+        l_cmd = "ps -ef|grep $BASE|wc -l";
+        l_cmd | getline l_num;
+        close(l_cmd);
+        if( l_num > $MAXPROC ) {
+            if( debug ) printf("compressing with bzip2 (%s running)\n",l_num);
+            system("$TMP.bz \\"" srcname "\\" " tgtname );
+        }else{
+            if( debug ) printf("compressing with bzip2 in background (%s running)\n",l_num);
+            system("nice $TMP.bz \\"" srcname "\\" " tgtname " &" );
+        }
+    }else{
+        num_no_bz++;
+        if( debug ) printf( "compressed file was already there!\n" );
+    }
+}
+function docp( srcname,size,tgtname, l_tgtsize ){
+    l_tgtsize = filesize(tgtname); 
+    if( l_tgtsize == 0 ){
+        num_cp++;
+        l_cmd = "ps -ef|grep $BASE|wc -l";
+        l_cmd | getline l_num;
+        close(l_cmd);
+        if( l_num > $MAXPROC ) {
+            if( debug ) printf("just copying (%s running)\n",l_num);
+            system("$TMP.cp \\"" srcname "\\" " tgtname );
+        }else{
+            if( debug ) printf("just copying in background (%s running)\n",l_num);
+            system("nice $TMP.cp \\"" srcname "\\" " tgtname " &" );
+        }
+    } else {
+        num_no_cp++;
+        if( size != l_tgtsize ) {
+            printf( "wrong file size\n" );
+        }else{
+            if( debug ) printf( "copied file was already there!\n" );
+        }
+    }
+}
+EOF
+#############################################################
+# Check, awk-Teil
+#############################################################
+cat <<EOF > $TMP.check.awk
+BEGIN{
+    if( ENVIRON["AF5_DEBUG"] == "true" ){
+        print "Debug mode."
+        print ENVIRON["AF5_ONLY"] "  " length(ENVIRON["AF5_ONLY"])
+        debug=1
+    }
+    readnamelist("$NAMELIST");
+    num = 0;
+    for( md5 in map_md5_size ) {
+        num++;
+        if( length(ENVIRON["AF5_ONLY"]) > 0 ){
+            md5=ENVIRON["AF5_ONLY"];
+        } 
+        # this is the empty file
+        if( md5 != "d41d8cd98f00b204e9800998ecf8427e" ){
+            if( debug ) print md5;
+            tname = tgtname(md5);
+            isize = filesize(tname);
+            zsize = filesize(tname ".bz2");
+            if( isize > 0 ){
+                # uncompressed file
+                cname = tname ".check";
+                eof = getline line < cname; 
+                close(cname);
+                split( line, list, ";" );
+                cmd5  = list[1];
+                ccrc  = list[2];
+                csize = list[3];
+	    
+                if( isize != map_md5_size[md5] || isize != csize) {
+                    printf("Wrong size for %s actual:%s list:%s check:%s!\n",tname,isize,map_md5_size[md5],csize);
+                }
+                if( zsize > 0 ){
+                    printf("Found both compressed and uncompressed for %s!\n",md5);
+                }
+                imd5 = filemd5( tname );
+                if( imd5 != md5 || imd5 != cmd5) {
+                    printf("Wrong md5 for %s actual:%s list:%s check:%s!\n",tname,imd5,md5,cmd5);
+                }
+                icrc = filecrc( tname );
+                if( icrc != map_md5_crc[md5] || icrc != ccrc) {
+                    printf("Wrong crc for %s actual:%s list:%s check:%s!\n",tname,icrc,map_md5_crc[md5],ccrc);
+                }
+            } else {
+                if( zsize == 0 ){
+                    printf("Found neither compressed nor uncompressed for %s!\n",md5);
+                    printf("Missing file was: %s!\n",map_md5_srcname[md5]);
+                } else {
+                    # compressed file
+                    cname = tname ".bz2.check";
+                    eof = getline line < cname;
+                    close(cname);
+                    if( eof <= 0 ) {
+                        printf("Check file %s not found!\n",cname);
+                    } else {
+                        split( line, list, ";" );
+                        cmd5  = list[1];
+                        ccrc  = list[2];
+                        csize = list[3];
+	                
+                        if( zsize != csize ){
+                            printf("Wrong size for %s actual:%s check:%s!\n",tname ".bz2",zsize,csize);
+                        }
+                        imd5 = filemd5( tname ".bz2" );
+                        if( imd5 != cmd5 ) {
+                            printf("Wrong md5 for %s actual:%s check:%s!\n",tname ".bz2",imd5,cmd5);
+                        }
+                        icrc = filecrc( tname ".bz2" );
+                        if( icrc != ccrc) {
+                            printf("Wrong crc for %s actual:%s check:%s!\n",tname ".bz2",icrc,ccrc);
+                        }
+                    }
+                }            
+            }
+        }
+        if( (num % 10000) == 0 ){
+            printf("Checked %s files in $NAMELIST\n",num);    
+        }
+        if( length(ENVIRON["AF5_ONLY"]) > 0 ){
+            break;
+        }    
+    }
+    printf("Found %s different files in $NAMELIST\n",num);    
+}
+EOF
+#############################################################
+# Combine, awk-Teil
+#############################################################
+cat <<EOF > $TMP.combine.awk
+BEGIN{
+    if( ENVIRON["AF5_DEBUG"] == "true" ){
+        print "Debug mode."
+        debug=1
+    }
+    readnamelist( "$NAMELIST" );
+}
+{
+    readnamelist( \$0 );
+}
+END{
+    writenamelist();
+    ## nonobvious way to clean arrays
+    # split("",map_srcname_md5);
+    # split("",map_md5_size);
+    # split("",map_md5_crc);
+    # readnamelist( "$NAMELIST" );
+}
+EOF
+#############################################################
+# greplist, awk-Teil
+#############################################################
+cat <<EOF > $TMP.greplist.awk
+BEGIN{
+    if( ENVIRON["AF5_DEBUG"] == "true" ){
+        debug=1
+        printf("reading list file %s\n",ENVIRON["AF5_LIST"]) > "/dev/stderr";
+    }
+    
+    eof = getline line  < ENVIRON["AF5_LIST"];
+    while( eof == 1 ){
+        for( i=1; i<=7; i++ ){
+            ifilter[i,substr(line,1,i)]=1;
+        }
+        xfilter[substr(line,1,32)]=1;
+        eof = getline line  < ENVIRON["AF5_LIST"];
+    }
+    if( debug ){
+        print "done" > "/dev/stderr";
+    }
+}
+{
+    for( i=1; i<=7; i++ )
+        if( ifilter[i,substr(\$0,1,i)] != 1 )
+            next;
+    if( xfilter[substr(\$0,1,32)]==1 ){
+        print \$0;
+    }
+}
+END{
+}
+EOF
+#############################################################
+# killlist, awk-Teil
+#############################################################
+cat <<EOF > $TMP.killlist.awk
+BEGIN{
+    if( ENVIRON["AF5_DEBUG"] == "true" ){
+        print "Debug mode."
+        debug=1
+    }
+    readnamelist( "$NAMELIST" );
+    num = 0;
+}
+{
+    md5=\$0;
+    num++;
+    if( num % 3 == 1 )      script = "$TRASHDIR/$$.A" 
+    else if( num % 3 == 2 ) script = "$TRASHDIR/$$.B"
+    else                    script = "$TRASHDIR/$$.C";
+    if( length( map_md5_size[md5] ) > 0 ){
+        printf("%s;%s;%s;%s\n",md5,map_md5_size[md5],map_md5_crc[md5],map_md5_srcname[md5]) > "$TRASH";
+        delete map_md5_size[md5];
+    }
+    if( debug ) printf("Killing %s in file %s.\n",md5,script);
+    printf("mv %s* $TRASHDIR\n",tgtname(md5)) > script;   
+}
+END{
+    writenamelist();
+    printf("rm $TRASHDIR/$$.A\n") >> "$TRASHDIR/$$.A";   
+    printf("rm $TRASHDIR/$$.B\n") >> "$TRASHDIR/$$.B";   
+    printf("rm $TRASHDIR/$$.C\n") >> "$TRASHDIR/$$.C";       
+}
+EOF
+#############################################################
+# awk-Bibliothek
+#############################################################
+cat <<EOF > $TMP.lib.awk
+function tgtname( md5 ){
+    return "$TODIR" "/" substr(md5,1,1) "/" substr(md5,2,1) "/" substr(md5,3,1) "/" md5;
+}
+function readerr( message, line, l_file ){
+    if( debug ) print message line
+    l_file = "$KAPUTT" "." message;
+    print line >> l_file;
+    errnum++;
+}
+## file format:
+## <md5>;<size>;<crc>;<source path>
+## parameters: filename (the file name)
+## local variables: l_eof, l_line, l_list, l_num, l_diffnum, l_listcount, l_msg, l_tnull, l_teins
+## global variables: errnum          (# errors encountered)
+##                   map_srcname_md5 (map original file name -> md5)
+##                   map_md5_size    (map md5 -> original size)
+##                   map_md5_crc     (map md5 -> crc)
+##                   map_md5_srcname (map md5 -> original file name)
+##
+function readnamelist( filename, l_eof, l_line, l_list, l_num, l_diffnum, l_listcount, l_msg, l_tnull, l_teins  ){
+    l_tnull = systime();
+    l_num = 0;
+    l_diffnum = 0;
+    errnum = 0;
+    l_eof = getline l_line  < filename;
+    while( l_eof == 1 ){
+        l_listcount = split( l_line, l_list, ";" );
+        if( l_listcount == 5 ){
+            # we allow for one semicolon in file name (but remove it for the list)
+            l_list[4] = l_list[4] "_" l_list[5];
+            l_listcount = 4;
+        }
+        if(      l_listcount != 4            ) readerr("wrong.listcount",l_line)
+        else if( length(l_list[1]) != 32     ) readerr("wrong.length.of.md5.sum",l_line)
+        else if( l_list[1] !~ "^[0-9a-f]*\$" ) readerr("md5.not.hexadecimal",l_line)
+        else if( length(l_list[2]) < 1       ) readerr("size.empty",l_line)
+        else if( l_list[2] !~ "^[0-9]*\$"    ) readerr("size.not.a.number",l_line)
+        else if( length(l_list[3]) < 1       ) readerr("crc.empty",l_line)
+        else if( l_list[3] !~ "^[0-9]*\$"    ) readerr("crc.empty",l_line)
+        else if( length(l_list[4]) < 1       ) readerr("file.name.empty",l_line)
+        else {
+            # all is well
+            map_srcname_md5[l_list[4]";"l_list[1]] = 1;
+            if( length( map_md5_size[l_list[1]] ) == 0 ){
+                l_diffnum++;
+                map_md5_size[l_list[1]]       = l_list[2];
+                map_md5_crc[l_list[1]]        = l_list[3];
+            } else {
+                if( map_md5_size[l_list[1]] != l_list[2] ) readerr("size.collision",l_line);
+                if( map_md5_crc[l_list[1]] != l_list[3]  ) readerr("crc.collision", l_line);
+            }
+            map_md5_srcname[l_list[1]]=l_list[4];
+            l_num++;
+        }
+        l_eof = getline l_line  < filename;
+    }
+    l_teins = systime();
+    printf("Read within %d sec %7d lines/%6d files of %s.\n",l_teins - l_tnull,l_num,l_diffnum,filename);
+    if( debug || errnum > 0 ){
+        printf("Found %s errors.\n",errnum);
+    }
+    close(filename);   
+}
+## <md5>;<size>;<crc>;<source path>
+function writenamelist( l_key, l_list, l_md5, l_srcname, l_num, l_tnull, l_teins, l_tzwei, l_tdrei ){
+    l_num  = 0;
+    l_diff = 0;
+    l_tnull = systime();
+    system("cat /dev/null > $NAMELIST.$$");
+    l_teins = systime();
+    for( l_key in map_srcname_md5) {
+         split( l_key, l_list, ";" );
+         l_srcname = l_list[1];
+         l_md5     = l_list[2];
+         if( length( map_md5_size[l_md5] ) > 0 ){
+             printf("%s;%s;%s;%s\n",l_md5,map_md5_size[l_md5],map_md5_crc[l_md5],l_srcname) >> "$NAMELIST.$$";
+             l_num++;
+         }
+    }
+    close("$NAMELIST");   
+    l_tzwei = systime();
+    system("mv $NAMELIST.$$ $NAMELIST");
+    l_tdrei = systime();
+    printf("Wrote %7d lines to $NAMELIST.\n",l_num);
+    if( debug ) {
+        printf("   time to clean temporary file: %d sec.\n", l_teins - l_tnull );
+        printf("   time to write temporary file: %d sec.\n", l_tzwei - l_teins );
+        printf("   time to move to final file:   %d sec.\n", l_tdrei - l_tzwei );
+        printf("   total time:                   %d sec.\n", l_tdrei - l_tnull );
+    }    
+}
+function filesize( name, l_cmd, l_line, l_word ){
+    l_cmd = "ls -l \\"" name "\\" 2>/dev/null";
+    l_cmd | getline l_line;
+    close(l_cmd);
+    split( l_line, l_word );
+    if( length( l_word[5] > 0 )) {
+        l_res = l_word[5];
+    } else {
+        l_res = 0;
+    }
+    return l_res;
+}
+function filecrc( name, l_cmd, l_line, l_word ){
+    l_cmd = "cksum \\"" name "\\"";
+    l_cmd | getline l_line;
+    close(l_cmd);
+    split( l_line, l_word );
+    return l_word[1];
+}
+function filemd5( name, l_cmd, l_line, l_word ){
+    l_cmd = "md5sum \\"" name "\\"";
+    l_cmd | getline l_line;
+    close(l_cmd);
+    split( l_line, l_word );
+    return l_word[1];
+}
+function filetype( name, l_cmd, l_line, l_word ){
+    l_cmd = "file \\"" name "\\"";
+    l_cmd | getline l_line;
+    close(l_cmd);
+    split( l_line, l_word );
+    if( l_word[2] == "TIFF" && name ~ "[.]nef\$" ) {
+        return "nef";
+    }else{
+        return l_word[2];
+    }
+}
+EOF
+cat $TMP.lib.awk >> $TMP.backup.awk
+cat $TMP.lib.awk >> $TMP.check.awk
+cat $TMP.lib.awk >> $TMP.combine.awk
+cat $TMP.lib.awk >> $TMP.greplist.awk
+cat $TMP.lib.awk >> $TMP.killlist.awk
+#############################################################
+# Backup, sh-Teil
+#############################################################
+af5_backup () {
+    af5_checkmount
+    if [ ! -d "$TODIR/f/f/f" ] ; then
+        mkdir -p $TODIR  2>/dev/null
+        for I in 0 1 2 3 4 5 6 7 8 9 a b c d e f
+          do
+            for J in 0 1 2 3 4 5 6 7 8 9 a b c d e f
+              do
+                for K in 0 1 2 3 4 5 6 7 8 9 a b c d e f
+                  do
+                    mkdir -p $TODIR/$I/$J/$K 2>/dev/null
+                    chmod 6755 $TODIR/$I/$J/$K 
+                  done
+              done
+          done
+    fi
+    if [ ! -d $1 ] ; then
+        af5_end 2
+    fi
+    mkdir -p $TODIR/old 2>/dev/null
+    nice bzip2 --best --stdout $NAMELIST > $TODIR/old/af5backup.names.`date +%Y%m%d`.bz2 &
+    find $1/ -type f $LAZY > $TMP.list 2> $TMP.find2
+    cat $TMP.find2 |tee -a $TMP.mail|logger -s -puser.info -t$BASE.$$ 
+    NUM=`wc -l $TMP.list|awk '{print $1}'`
+    echo backing up $NUM files from $1 |tee -a $TMP.mail|logger -s -puser.info -t$BASE.$$ 
+    if [ -s $TMP.list ] ; then
+        awk -f $TMP.backup.awk < $TMP.list |tee -a $TMP.mail|logger -s -puser.info -t$BASE.$$
+    fi
+}
+#############################################################
+# Combine, sh-Teil
+#############################################################
+af5_combine () {
+    af5_checkmount 
+    echo $NAMELIST > $TMP.files
+    find $OLDDIR -type f -name "*.added" | awk -f $TMP.combine.awk |tee -a $TMP.mail|logger -s -puser.info -t$BASE.$$
+    find $OLDDIR -type f -name "*.added"  -mtime +2 -exec bzip2 --best {} \;
+    find $OLDDIR -type f -name "*.kaputt.*" -mtime +2 -exec bzip2 --best {} 2>/dev/null \;
+}
+#############################################################
+# Check, sh-Teil
+#############################################################
+af5_check () {
+    af5_checkmount 
+
+    export AF5_ONLY=$1
+
+    echo|awk -f $TMP.check.awk|tee -a $TMP.mail|logger -s -puser.info -t$BASE.$$
+    if [ -z "$1" ] ; then
+        echo "Checking for unconnected files:"|tee -a $TMP.mail|logger -s -puser.info -t$BASE.$$
+        cd $TODIR
+        for I in 0 1 2 3 4 5 6 7 8 9 a b c d e f
+          do        
+            find $I -type f >> $TMP.1
+          done
+        cut -c7-38 < $TMP.1    | sort | uniq > $LOSTLIST.1
+        cut -c1-32 < $NAMELIST | sort | uniq > $LOSTLIST.2
+        diff $LOSTLIST.1 $LOSTLIST.2 |grep "^<"|cut -c3-35 > $LOSTLIST
+        head $LOSTLIST |tee -a $TMP.mail|logger -s -puser.err -t$BASE.$$
+        for I in `cat $LOSTLIST`
+          do
+            EINS=`echo $I|cut -c1,1`
+            ZWEI=`echo $I|cut -c2,2`
+            DREI=`echo $I|cut -c3,3`
+            find $TODIR/$EINS/$ZWEI/$DREI -type f -name "$I*" ! -name "*.check" -exec cp {} $LOSTDIR \; -print | tee -a $TMP.mail|logger -s -puser.info -t$BASE.$$
+            bunzip2 $LOSTDIR/$I.bz2
+            file $LOSTDIR/$I | tee -a $TMP.mail|logger -s -puser.info -t$BASE.$$
+          done
+        find $LOSTDIR -type f -name "*.check" -exec rm {} \;
+    fi
+    #af_finally
+
+    af5_end 0
+}
+#############################################################
+# Recompute, berechnet den Inhalt der check-Dateien neu
+# Ohne vorherige Überprüfung!!
+#############################################################
+af5_recompute () {
+    af5_checkmount
+    find $TODIR -type f |grep -v ".check"|grep -v $BASE|grep -v "lost+found" > $TMP.list
+    cat $TMP.list | while read FILE
+      do
+        CHECK=$FILE.check
+        MD5=`md5sum $FILE|awk '{print $1}'`
+        BUF=`cksum $FILE`
+        CRC=`echo $BUF|awk '{print $1}'`
+        SIZ=`echo $BUF|awk '{print $2}'`
+        echo $MD5';'$CRC';'$SIZ';'$FILE > $FILE.check
+      done
+}
+#############################################################
+# Erstmal räumen wir auf.
+#############################################################
+af5_clean () {
+    find /tmp -type f -name "*mpg"  -mtime +1 -exec rm -f {} \;
+    find /tmp -type f -name "*mpeg" -mtime +1 -exec rm -f {} \;
+    find /tmp -type f -name "*avi"  -mtime +1 -exec rm -f {} \;
+    find /tmp -type f -name "*wmv"  -mtime +1 -exec rm -f {} \;
+    
+    for i in `find /home -type d -name Trash`
+      do 
+        find $i -mtime +1 -type f -exec rm {} \; -print|tee -a $TMP.mail|logger -s -puser.info -t$BASE.$$ 2>&1 
+      done
+    
+    for i in `find /home -type d -name .mozilla`
+      do 
+        for j in `find $i -type d -name "Cache*"`
+          do
+            find $j -mtime +1 -type f -exec rm {} \; -print|tee -a $TMP.mail|logger -s -puser.info -t$BASE.$$ 2>&1 
+          done
+      done
+    
+    for i in `find /home -type d -name .netscape`
+      do 
+        for j in `find $i -type d -name "cache"`
+          do
+            find $j -mtime +1 -type f -exec rm {} \; -print|tee -a $TMP.mail|logger -s -puser.info -t$BASE.$$ 2>&1 
+          done
+      done
+    
+    for i in `find /home -type d -name .kde`
+      do 
+        for j in `find $i -type d -name "cache"`
+          do
+            find $j -mtime +1 -type f -exec rm {} \; -print|tee -a $TMP.mail|logger -s -puser.info -t$BASE.$$ 2>&1 
+          done
+      done
+    
+    for i in `find /root -type d -name Trash`
+      do 
+        find $i -mtime +1 -type f -exec rm {} \; -print|tee -a $TMP.mail|logger -s -puser.info -t$BASE.$$ 2>&1 
+      done
+    
+    for i in `find /root -type d -name .mozilla`
+      do 
+        for j in `find $i -type d -name "Cache*"`
+          do
+            find $j -mtime +1 -type f -exec rm {} \; -print|tee -a $TMP.mail|logger -s -puser.info -t$BASE.$$ 2>&1 
+          done
+      done
+    
+    for i in `find /root -type d -name .netscape`
+      do 
+        for j in `find $i -type d -name "cache"`
+          do
+            find $j -mtime +1 -type f -exec rm {} \; -print|tee -a $TMP.mail|logger -s -puser.info -t$BASE.$$ 2>&1 
+          done
+      done
+    
+    for i in `find /root -type d -name .kde`
+      do 
+        for j in `find $i -type d -name "cache"`
+          do
+            find $j -mtime +1 -type f -exec rm {} \; -print|tee -a $TMP.mail|logger -s -puser.info -t$BASE.$$ 2>&1 
+          done
+      done
+}    
+############################################################
+af5_checkmount () {
+    if [ ! -f "$MOUNTDIR/QWERTZUIOP" ] ; then
+        mount $MOUNTDIR
+        sleep 2
+        if [ ! -f "$MOUNTDIR/QWERTZUIOP" ] ; then
+            FROMCRON = 0
+            echo Target not mounted!|tee -a $TMP.mail|logger -s -puser.err -t$BASE.$$
+            af5_end 5
+            exit 5 
+        fi
+    fi
+    if [ ! -f "$MOUNTDIR2/QWERTZUIOP2" ] ; then
+        mount $MOUNTDIR2
+        sleep 2
+        if [ ! -f "$MOUNTDIR2/QWERTZUIOP2" ] ; then
+            FROMCRON = 0
+            echo Target not mounted!|tee -a $TMP.mail|logger -s -puser.err -t$BASE.$$
+            af5_end 5
+            exit 5
+        fi
+    fi
+}
+############################################################
+af5_end () {
+    if [ ! "$FROMCRON" = "1" ] ; then
+        STOP=`date +%s`
+        DIFF=`expr $STOP - $START`
+        DIFFH=`expr $DIFF / 3600`
+        DIFFM=`expr \( $DIFF - \( $DIFFH \* 3600 \) \) / 60`
+        DIFFS=`expr $DIFF % 60`
+        echo|awk "{printf(\"It took me %d:%02d:%02d to get here with RC %d\n\",$DIFFH,$DIFFM,$DIFFS,$1)}"|tee -a $TMP.mail|logger -s -puser.info -t$BASE.$$
+        #umount $MOUNTDIR 2>&1 |logger -s -puser.info -t$BASE.$$
+        #mount | grep $MOUNTDIR > /dev/null
+        #if [ "$?" = "0" ] ; then
+        #    echo "Sleeping somwhat" |logger -s -puser.info -t$BASE.$$
+        #    sleep 300
+        #    umount $MOUNTDIR 2>&1 |logger -s -puser.info -t$BASE.$$
+        #fi
+        if [ $1 -ne 99 ] ; then
+            mail -s Backup $MAILTO < $TMP.mail
+        fi
+        rm $TMP.* 
+        af5_mutex_out 
+        exit $1
+    fi
+}
+#############################################################
+# 
+#############################################################
+af5_finally () {
+
+    mount|grep $MOUNTDIR                 | tee -a $TMP.mail|logger -s -puser.info -t$BASE.$$ 
+    DEV=`mount|grep $MOUNTDIR|awk '{print $1}'`
+    if [ -n "$DEV" ] ; then
+        while true 
+          do
+            fuser -m $MOUNTDIR/ 
+            if [ ! "$?" = "0" ] ; then
+                break
+            fi
+            sleep $SLEEP
+          done
+        fuser -m $MOUNTDIR/ 
+        if [ ! "$?" = "0" ] ; then
+            umount $MOUNTDIR        2>&1 | tee -a $TMP.mail|logger -s -puser.info -t$BASE.$$ 
+            sleep $SLEEP		     					     
+            /sbin/fsck -aV $DEV          2>&1 | tee -a $TMP.mail|logger -s -puser.info -t$BASE.$$
+        else 
+            echo Blocked due to running processes|tee -a $TMP.mail|logger -t$BASE.$$ 
+            fuser -vm $MOUNTDIR     2>&1 | tee -a $TMP.mail|logger -s -puser.err -t$BASE.$$         
+        fi  
+    fi
+}
+#############################################################
+# 
+#############################################################
+af5_kill () {
+    af5_checkmount  
+
+    echo $1 | egrep '^[0-9a-f]{32}$'
+    if [ "$?" = "0" ] ; then    
+        echo killing $1 | tee -a $TMP.mail|logger -s -puser.info -t$BASE.$$
+        EINS=`echo $1|cut -c1,1`
+        ZWEI=`echo $1|cut -c2,2`
+        DREI=`echo $1|cut -c3,3`
+        find $TODIR/$EINS/$ZWEI/$DREI -type f -name "$1*" -exec mv {} $TRASHDIR \; -print | tee -a $TMP.mail|logger -s -puser.info -t$BASE.$$
+        PATTERN="^$1"
+        grep    $PATTERN $NAMELIST | tee $TRASH | tee -a $TMP.mail|logger -s -puser.info -t$BASE.$$
+        grep -v $PATTERN $NAMELIST > $TODIR/$$
+        mv $TODIR/$$ $NAMELIST
+        #diff $TMP $NAMELIST
+    else 
+        echo "$1 is not a valid MD5 checksum" | tee -a $TMP.mail|logger -s -puser.err -t$BASE.$$ 
+    fi
+}
+#############################################################
+# 
+#############################################################
+af5_greplist () {
+    af5_checkmount  
+
+    if [ -s $1 ] ; then
+        export AF5_LIST=$1
+        awk -f $TMP.greplist.awk < $NAMELIST | sort | uniq
+    else 
+        echo "$1 is not a usable list" | tee -a $TMP.mail|logger -s -puser.err -t$BASE.$$ 
+    fi
+}
+#############################################################
+# 
+#############################################################
+af5_killlist () {
+    af5_checkmount  
+
+    if [ -s $1 ] ; then
+        nice bzip2 --best --stdout $NAMELIST > $TODIR/old/af5backup.names.`date +%Y%m%d`.bz2 &
+        cut -c1-32 < $1 | sort | uniq > $TMP.list 
+        export AF5_LIST=$TMP.list
+        wc -l $1 $TMP.list                   | tee -a $TMP.mail|logger -s -puser.err -t$BASE.$$ 
+        awk -f $TMP.killlist.awk < $TMP.list | tee -a $TMP.mail|logger -s -puser.err -t$BASE.$$ 
+        cat /dev/null > nohup.out
+        if [ -s $TRASHDIR/$$.A ] ; then
+             chmod 700 $TRASHDIR/$$.A
+             #ls -l $TRASHDIR/$$.A
+             #cat $TRASHDIR/$$.A
+             nohup nice $TRASHDIR/$$.A 2>&1 | tee -a $TMP.mail|logger -s -puser.err -t$BASE.$$ &
+        fi 
+        if [ -s $TRASHDIR/$$.B ] ; then
+             chmod 700 $TRASHDIR/$$.B
+             #ls -l $TRASHDIR/$$.B
+             #cat $TRASHDIR/$$.B
+             nohup nice $TRASHDIR/$$.B 2>&1 | tee -a $TMP.mail|logger -s -puser.err -t$BASE.$$ &
+        fi 
+        if [ -s $TRASHDIR/$$.C ] ; then
+             chmod 700 $TRASHDIR/$$.C
+             #ls -l $TRASHDIR/$$.C
+             #cat $TRASHDIR/$$.C
+             nohup nice $TRASHDIR/$$.C 2>&1 | tee -a $TMP.mail|logger -s -puser.err -t$BASE.$$ &
+        fi 
+    else 
+        echo "$1 is not a usable list" | tee -a $TMP.mail|logger -s -puser.err -t$BASE.$$ 
+    fi
+}
+#############################################################
+# 
+#############################################################
+af5_fromcron () {
+    af5_checkmount  
+
+    # only once daily
+    NOW=`date +%s`
+    if [ -f $TODIR/$BASE.stamp ] ; then
+        LAST=`cat $TODIR/$BASE.stamp`
+        DIFF=`expr $NOW - $LAST`
+        # slightly drifting backwards
+        if [ "$DIFF" -lt "64800" ] ; then
+            echo Not necessary yet.|logger -s -puser.info -t$BASE.$$
+            af5_end 99
+        else 
+            echo $NOW > $TODIR/$BASE.stamp
+        fi
+    else 
+        echo $NOW > $TODIR/$BASE.stamp
+    fi
+
+    export FROMCRON=1
+    af5_clean
+    if [ "$HOST" = "elefant" ] ; then
+        af5_combine
+
+        #DOM=`date +%d`
+        #if [ "$DOM" = "13" ] ; then
+        #    # once a month checking
+        #    af5_check
+        #else
+        #    if [ "$DOM" = "26" ] ; then
+        #        # once a month not lazy
+        #        export LAZY=""
+        #    fi
+            af5_backup /3data/Fotos
+            af5_backup /1data/Video
+            af5_backup /1data/astrid
+            af5_backup /1data/ich
+            af5_backup /0data/Musik
+            af5_backup /root
+            af5_backup /etc
+            af5_backup /1data/physhome/astrid
+            af5_backup /1data/physhome/astrid.old
+            af5_backup /1data/physhome/ich.old
+            af5_backup /home/ich
+            af5_backup /data/repository/repos
+	    
+            af5_backup /lost+found
+            af5_backup /0data/lost+found
+            af5_backup /1data/lost+found
+            af5_backup /2data/lost+found
+            af5_backup /3data/lost+found
+            
+            /sbin/mount.cifs //drache/C /dracheC -o user=ich,password=cc440a08 2>&1  > $TMP.mountout
+            RC=$?
+            echo "RC $RC" >>  $TMP.mountout
+            cat $TMP.mountout >> $TMP.mail
+            logger -s -puser.info -t$BASE.$$ < $TMP.mountout
+            if [ "$RC" = "0" ] ; then
+                 af5_backup /dracheC/Users/ich/Documents
+                 af5_backup /dracheC/Users/ich/Videos
+                 af5_backup /dracheC/Users/ich/Music
+                 af5_backup /dracheC/Users/ich/AppData
+                 sleep 3
+                 /bin/umount /dracheC
+            fi
+                
+            af5_combine
+        #fi 
+
+        df $MOUNTDIR |tee -a $TMP.mail|logger -s -puser.info -t$BASE.$$
+        df $MOUNTDIR2|tee -a $TMP.mail|logger -s -puser.info -t$BASE.$$
+        #af5_finally
+    fi
+    FROMCRON=0
+    af5_end 0 
+}
+############################################################
+# prepare copy and bzip2 scripts (with .check file creation) 
+############################################################
+cat <<EOF > $TMP.cp
+    #if [ "\$AF5_DEBUG" = "true" ] ; then    
+    #    set -x
+    #fi
+    cp -p "\$1" \$2
+    MD5=\`md5sum \$2|awk '{print \$1}'\`
+    BUF=\`cksum \$2\`
+    CRC=\`echo \$BUF|awk '{print \$1}'\`
+    SIZ=\`echo \$BUF|awk '{print \$2}'\`
+    echo \$MD5';'\$CRC';'\$SIZ';'\$2 > \$2.check
+EOF
+cat <<EOF > $TMP.bz
+    #if [ "\$AF5_DEBUG" = "true" ] ; then    
+    #    set -x
+    #fi
+    bzip2 --best --stdout --keep "\$1" > \$2
+    MD5=\`md5sum \$2|awk '{print \$1}'\`
+    BUF=\`cksum \$2\`
+    CRC=\`echo \$BUF|awk '{print \$1}'\`
+    SIZ=\`echo \$BUF|awk '{print \$2}'\`
+    echo \$MD5';'\$CRC';'\$SIZ';'\$2 > \$2.check
+EOF
+#cat $TMP.cp
+#cat $TMP.bz
+#exit
+chmod 777 $TMP.cp $TMP.bz
+############################################################
+# start mutex section
+############################################################
+af5_mutex_in () {
+    PID=/var/run/$BASE.pid
+    if [ -s $PID ] ; then
+        ps -e|grep `cat $PID` > /dev/null
+        if [ "$?" == "0" ] ; then
+            echo other process `cat $PID` still running|logger -s -puser.err -t$BASE.$$ 
+            exit 42
+        else 
+            echo other process `cat $PID` died some time ago|tee -a $TMP.mail|logger -s -puser.err -t$BASE.$$ 
+        fi
+    fi
+    echo $$ > $PID
+}
+############################################################
+# end mutex section
+############################################################
+af5_mutex_out () {
+    rm -f $PID
+}
+############################################################
+# main
+############################################################
+if [ "$1" = "--force" ] ; then
+    export FORCE=true
+    shift
+fi
+if [ "$1" = "--debug" ] ; then
+    export AF5_DEBUG=true
+    shift
+fi
+if [ "$1" = "--lazy"  ] ; then
+    export LAZY="-mtime -7"
+    shift
+fi
+if [ "$1" = "--debug" ] ; then
+    export AF5_DEBUG=true
+    shift
+fi
+if [ "$1" = "--force" ] ; then
+    export FORCE=true
+    shift
+fi
+if [ "$1" = "--lazy"  ] ; then
+    export LAZY="-mtime -7"
+    shift
+fi
+if [ "$1" = "--debug" ] ; then
+    export AF5_DEBUG=true
+    shift
+fi
+
+if [ "$1" = "clean" ] ; then
+    af5_mutex_in
+    af5_clean
+elif [ "$1" = "backup" ] ; then
+    af5_mutex_in
+    af5_combine
+    af5_backup $2
+    af5_combine
+elif [ "$1" = "backupcheck" ] ; then
+    af5_mutex_in
+    af5_combine
+    af5_backup $2
+    af5_combine
+    af5_check 
+elif [ "$1" = "check" ] ; then
+    af5_mutex_in
+    af5_check $2
+elif [ "$1" = "combine" ] ; then
+    af5_mutex_in
+    af5_combine
+elif [ "$1" = "kill" ] ; then
+    af5_mutex_in
+    af5_kill $2
+elif [ "$1" = "killlist" ] ; then
+    af5_mutex_in
+    af5_killlist $2
+elif [ "$1" = "greplist" ] ; then
+    af5_greplist $2
+elif [ "$1" = "recompute" ] ; then
+    af5_mutex_in
+    af5_recompute $2
+elif [ "$1" = "fromcron" ] ; then
+    af5_mutex_in
+    af5_fromcron
+elif [ "$1" = "finally" ] ; then
+    af5_mutex_in
+    #af5_finally
+else
+    cat<<EOF
+
+usage:
+    af5backup <opts> clean
+    af5backup <opts> backup <dir>
+    af5backup <opts> backupcheck <dir>
+    af5backup <opts> check
+    af5backup <opts> kill
+    af5backup <opts> killlist <list>
+    af5backup <opts> greplist <list>
+    af5backup <opts> fromcron
+
+<opts>:
+    --force rebackup everything
+    --debug some output
+    --lazy  consider only changes of last week
+EOF
+    af5_end 1
+fi
+af5_end 0
