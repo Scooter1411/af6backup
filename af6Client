@@ -85,7 +85,8 @@ af6_backup () {
         MDATE=`echo $LS|cut -d' ' -f6`
         ABS=`abspath $1`
         #ssh $TARGET af6Server backup $MD5 $SIZE $MDATE $HOST $ABS 
-        af6Server backup $MD5 $SIZE $MDATE $HOST $ABS         
+        echo "checkBackup $MD5 $SIZE $MDATE $HOST \"$ABS\""|logger -s -puser.info -t$BASE.$$
+        ./af6Server checkBackup $MD5 $SIZE $MDATE $HOST "$ABS"         
     fi
 }
 #############################################################

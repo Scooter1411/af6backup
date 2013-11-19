@@ -17,11 +17,11 @@ TMP=/tmp/$BASE.$$
 #date 1>&2
 logger -s -puser.info -t$BASE.$$ started
 HOST=`hostname`
-TARGET=admin@quagga
+OLDTARGET=admin@quokka
 #############################################################
 # main configuration
 #############################################################
-MOUNTDIR=/backup/mount1
+MOUNTDIR=/
 MOUNTDIR2=/backup/mount2
 MAXPROC=20
 COMMITEVERY=1000
@@ -72,89 +72,23 @@ abspath () { case "$1" in /*)printf "%s\n" "$1";; *)printf "%s\n" "$PWD/$1";; es
 ############################################################
 # do the backup
 ############################################################
-af6_backup () {
+af6_checkBackup () {
 
-    if [ -d "$1" ] ; then
-        find $1 -type f $LAZY -exec $MYSELF {} \;
-    elif [ -z "$1" ] ; then 
-        find . -type f $LAZY -exec $MYSELF {} \;
-    elif [ -f "$1" ] ; then
-        MD5=`md5sum $1|cut -d' ' -f1`
-        LS=`ls -l --time-style="+%Y%m%d%H%M%S" $1`
-        SIZE=`echo $LS|cut -d' ' -f5`
-        MDATE=`echo $LS|cut -d' ' -f6`
-        ABS=`abspath $1`
-        #ssh $TARGET af6Server backup $MD5 $SIZE $MDATE $HOST $ABS 
-        af6Server backup $MD5 $SIZE $MDATE $HOST $ABS         
-    fi
+    # todo check params    
+    MD5=$1
+    echo "MD5=$MD5"|logger -s -puser.info -t$BASE.$$
+    SIZE=$2
+    echo "SIZE=$SIZE"|logger -s -puser.info -t$BASE.$$
+    MDATE=$3
+    echo "MDATE=$MDATE"|logger -s -puser.info -t$BASE.$$
+    HOST=$4
+    echo "HOST=$HOST"|logger -s -puser.info -t$BASE.$$
+    ABS=$5
+    echo "ABS=$ABS"|logger -s -puser.info -t$BASE.$$
+
+    SUBMD5=`echo $MD5|cut -c1-3`
+    echo $SUBMD5
 }
-#############################################################
-# Erstmal räumen wir auf.
-#############################################################
-af6_clean () {
-    find /tmp -type f -name "*mpg"  -mtime +1 -exec rm -f {} \;
-    find /tmp -type f -name "*mpeg" -mtime +1 -exec rm -f {} \;
-    find /tmp -type f -name "*avi"  -mtime +1 -exec rm -f {} \;
-    find /tmp -type f -name "*wmv"  -mtime +1 -exec rm -f {} \;
-    
-    for i in `find /home -type d -name Trash`
-      do 
-        find $i -mtime +1 -type f -exec rm {} \; -print|tee -a $TMP.mail|logger -s -puser.info -t$BASE.$$ 2>&1 
-      done
-    
-    for i in `find /home -type d -name .mozilla`
-      do 
-        for j in `find $i -type d -name "Cache*"`
-          do
-            find $j -mtime +1 -type f -exec rm {} \; -print|tee -a $TMP.mail|logger -s -puser.info -t$BASE.$$ 2>&1 
-          done
-      done
-    
-    for i in `find /home -type d -name .netscape`
-      do 
-        for j in `find $i -type d -name "cache"`
-          do
-            find $j -mtime +1 -type f -exec rm {} \; -print|tee -a $TMP.mail|logger -s -puser.info -t$BASE.$$ 2>&1 
-          done
-      done
-    
-    for i in `find /home -type d -name .kde`
-      do 
-        for j in `find $i -type d -name "cache"`
-          do
-            find $j -mtime +1 -type f -exec rm {} \; -print|tee -a $TMP.mail|logger -s -puser.info -t$BASE.$$ 2>&1 
-          done
-      done
-    
-    for i in `find /root -type d -name Trash`
-      do 
-        find $i -mtime +1 -type f -exec rm {} \; -print|tee -a $TMP.mail|logger -s -puser.info -t$BASE.$$ 2>&1 
-      done
-    
-    for i in `find /root -type d -name .mozilla`
-      do 
-        for j in `find $i -type d -name "Cache*"`
-          do
-            find $j -mtime +1 -type f -exec rm {} \; -print|tee -a $TMP.mail|logger -s -puser.info -t$BASE.$$ 2>&1 
-          done
-      done
-    
-    for i in `find /root -type d -name .netscape`
-      do 
-        for j in `find $i -type d -name "cache"`
-          do
-            find $j -mtime +1 -type f -exec rm {} \; -print|tee -a $TMP.mail|logger -s -puser.info -t$BASE.$$ 2>&1 
-          done
-      done
-    
-    for i in `find /root -type d -name .kde`
-      do 
-        for j in `find $i -type d -name "cache"`
-          do
-            find $j -mtime +1 -type f -exec rm {} \; -print|tee -a $TMP.mail|logger -s -puser.info -t$BASE.$$ 2>&1 
-          done
-      done
-}    
 ############################################################
 af6_end () {
     if [ ! "$FROMCRON" = "1" ] ; then
@@ -180,113 +114,6 @@ af6_end () {
         exit $1
     fi
 }
-#############################################################
-# 
-#############################################################
-af6_fromcron () {
-
-    # only once daily
-    NOW=`date +%s`
-    if [ -f $TODIR/$BASE.stamp ] ; then
-        LAST=`cat $TODIR/$BASE.stamp`
-        DIFF=`expr $NOW - $LAST`
-        # slightly drifting backwards
-        if [ "$DIFF" -lt "64800" ] ; then
-            echo Not necessary yet.|logger -s -puser.info -t$BASE.$$
-            af6_end 99
-        else 
-            echo $NOW > $TODIR/$BASE.stamp
-        fi
-    else 
-        echo $NOW > $TODIR/$BASE.stamp
-    fi
-
-    export FROMCRON=1
-    af6_clean
-    if [ "$HOST" = "elefant" ] ; then
-        af6_combine
-
-        #DOM=`date +%d`
-        #if [ "$DOM" = "13" ] ; then
-        #    # once a month checking
-        #    af6_check
-        #else
-        #    if [ "$DOM" = "26" ] ; then
-        #        # once a month not lazy
-        #        export LAZY=""
-        #    fi
-            af6_backup /3data/Fotos
-            af6_backup /1data/Video
-            af6_backup /1data/astrid
-            af6_backup /1data/ich
-            af6_backup /0data/Musik
-            af6_backup /root
-            af6_backup /etc
-            af6_backup /1data/physhome/astrid
-            af6_backup /1data/physhome/astrid.old
-            af6_backup /1data/physhome/ich.old
-            af6_backup /home/ich
-            af6_backup /data/repository/repos
-	    
-            af6_backup /lost+found
-            af6_backup /0data/lost+found
-            af6_backup /1data/lost+found
-            af6_backup /2data/lost+found
-            af6_backup /3data/lost+found
-            
-            /sbin/mount.cifs //drache/C /dracheC -o user=ich,password=cc440a08 2>&1  > $TMP.mountout
-            RC=$?
-            echo "RC $RC" >>  $TMP.mountout
-            cat $TMP.mountout >> $TMP.mail
-            logger -s -puser.info -t$BASE.$$ < $TMP.mountout
-            if [ "$RC" = "0" ] ; then
-                 af6_backup /dracheC/Users/ich/Documents
-                 af6_backup /dracheC/Users/ich/Videos
-                 af6_backup /dracheC/Users/ich/Music
-                 af6_backup /dracheC/Users/ich/AppData
-                 sleep 3
-                 /bin/umount /dracheC
-            fi
-                
-            af6_combine
-        #fi 
-
-        df $MOUNTDIR |tee -a $TMP.mail|logger -s -puser.info -t$BASE.$$
-        df $MOUNTDIR2|tee -a $TMP.mail|logger -s -puser.info -t$BASE.$$
-        #af6_finally
-    fi
-    FROMCRON=0
-    af6_end 0 
-}
-############################################################
-# prepare copy and bzip2 scripts (with .check file creation) 
-############################################################
-cat <<EOF > $TMP.cp
-    #if [ "\$AF6_DEBUG" = "true" ] ; then    
-    #    set -x
-    #fi
-    cp -p "\$1" \$2
-    MD5=\`md5sum \$2|awk '{print \$1}'\`
-    BUF=\`cksum \$2\`
-    CRC=\`echo \$BUF|awk '{print \$1}'\`
-    SIZ=\`echo \$BUF|awk '{print \$2}'\`
-    echo \$MD5';'\$CRC';'\$SIZ';'\$2 > \$2.check
-EOF
-cat <<EOF > $TMP.bz
-    #if [ "\$AF6_DEBUG" = "true" ] ; then    
-    #    set -x
-    #fi
-    bzip2 --best --stdout --keep "\$1" > \$2
-    MD5=\`md5sum \$2|awk '{print \$1}'\`
-    BUF=\`cksum \$2\`
-    CRC=\`echo \$BUF|awk '{print \$1}'\`
-    SIZ=\`echo \$BUF|awk '{print \$2}'\`
-    echo \$MD5';'\$CRC';'\$SIZ';'\$2 > \$2.check
-EOF
-#cat $TMP.cp
-#cat $TMP.bz
-#exit
-chmod 777 $TMP.cp $TMP.bz
 ############################################################
 # main
 ############################################################
@@ -319,12 +146,10 @@ if [ "$1" = "--debug" ] ; then
     shift
 fi
 
-if [ "$1" = "backup" ] ; then
+if [ "$1" = "checkBackup" ] ; then
     af6_mutex_in
-    af6_backup $2
-elif [ "$1" = "fromcron" ] ; then
-    af6_mutex_in
-    af6_fromcron
+    shift
+    af6_checkBackup $*
 else
     cat<<EOF
 
