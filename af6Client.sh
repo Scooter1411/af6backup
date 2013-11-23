@@ -17,7 +17,7 @@ TMP=/tmp/$BASE.$$
 #date 1>&2
 logger -s -puser.info -t$BASE.$$ started
 HOST=`hostname`
-TARGET=admin@quagga
+TARGET=admin@quokka
 #############################################################
 # main configuration
 #############################################################
@@ -75,10 +75,11 @@ abspath () { case "$1" in /*)printf "%s\n" "$1";; *)printf "%s\n" "$PWD/$1";; es
 af6_backup () {
 
     if [ -d "$1" ] ; then
-        find $1 -type f $LAZY -exec $MYSELF {} \;
+        find $1 -type f $LAZY -exec $MYSELF backup {} \;
     elif [ -z "$1" ] ; then 
-        find . -type f $LAZY -exec $MYSELF {} \;
+        find . -type f $LAZY -exec $MYSELF backup {} \;
     elif [ -f "$1" ] ; then
+        af6_mutex_in
         MD5=`md5sum $1|cut -d' ' -f1`
         LS=`ls -l --time-style="+%Y%m%d%H%M%S" $1`
         SIZE=`echo $LS|cut -d' ' -f5`
@@ -86,7 +87,20 @@ af6_backup () {
         ABS=`abspath $1`
         #ssh $TARGET af6Server backup $MD5 $SIZE $MDATE $HOST $ABS 
         echo "checkBackup $MD5 $SIZE $MDATE $HOST \"$ABS\""|logger -s -puser.info -t$BASE.$$
-        ./af6Server checkBackup $MD5 $SIZE $MDATE $HOST "$ABS"         
+        ./af6Server.sh checkBackup $MD5 $SIZE $MDATE $HOST "$ABS" | tee $TMP.serverOut
+        RETCODE=`tail -1 < $TMP.serverOut`   
+        if [ $RETCODE -eq 'DOBACKUP' ] ; then
+            # we really have to backup this file
+            mkdir -p $TMP.dir
+            bzip2 --best --stdout --force $1 > $TMP.dir/$MD5.bz2
+            BZSIZE=`ls -l $TMP.dir/$MD5.bz2|cut -d' ' -f5`  
+            if [ SIZE -gt BZSIZE ] ; then
+                echo "bla"
+            else
+                echo "blub"
+            fi
+        fi
+        af6_mutex_out 
     fi
 }
 #############################################################
@@ -177,7 +191,6 @@ af6_end () {
             ssh astrid@elefant mail -s Backup $MAILTO < $TMP.mail
         fi
         rm $TMP.* 
-        af6_mutex_out 
         exit $1
     fi
 }
@@ -321,10 +334,8 @@ if [ "$1" = "--debug" ] ; then
 fi
 
 if [ "$1" = "backup" ] ; then
-    af6_mutex_in
     af6_backup $2
 elif [ "$1" = "fromcron" ] ; then
-    af6_mutex_in
     af6_fromcron
 else
     cat<<EOF
