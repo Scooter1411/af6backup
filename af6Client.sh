@@ -21,21 +21,15 @@ TARGET=admin@quokka
 #############################################################
 # main configuration
 #############################################################
-MOUNTDIR=/backup/mount1
-MOUNTDIR2=/backup/mount2
+MOUNTDIR=/share/HDA_DATA/Public
 MAXPROC=20
 COMMITEVERY=1000
 SLEEP=10
 #############################################################
-TODIR=$MOUNTDIR/af6backup.dir
+TODIR=$MOUNTDIR/af5backup.dir
 OLDDIR=$TODIR/old
-NAMELIST=$TODIR/af6backup.names
-KAPUTT=$OLDDIR/$BASE.$DATE.$$.kaputt
-LOSTDIR=/tmp/lost
-LOSTLIST=$OLDDIR/$BASE.$DATE.$$.lost
-ADDED=$OLDDIR/$BASE.$DATE.$$.added
-TRASHDIR=/tmp/trash
-TRASH=$TRASHDIR/$BASE.$DATE.$$.trash
+LEGACYLIST=$TODIR/af5backup.names
+NAMESDIR=$TODIR/af6backup.names
 MAILTO="alexander.franz.1411@gmail.com"
 ############################################################
 # start mutex section
@@ -60,15 +54,14 @@ af6_mutex_out () {
     rm -f $PID
 }
 ############################################################
-# end mutex section
+# canonical path name
 ############################################################
-abspath () { case "$1" in /*)printf "%s\n" "$1";; *)printf "%s\n" "$PWD/$1";; esac; }
-#abspath () { 
-#    case "$1" in 
-#    /*)printf "%s\n" "$1"
-#     *)printf "%s\n" "$PWD/$1"
-#    esac 
-#}
+abspath () { 
+   case "$1" in 
+       /*)printf "%s\n" "$1";;
+       *)printf  "%s\n" "$PWD/$1";; 
+   esac; 
+}
 ############################################################
 # do the backup
 ############################################################
@@ -87,18 +80,27 @@ af6_backup () {
         ABS=`abspath $1`
         #ssh $TARGET af6Server backup $MD5 $SIZE $MDATE $HOST $ABS 
         echo "checkBackup $MD5 $SIZE $MDATE $HOST \"$ABS\""|logger -s -puser.info -t$BASE.$$
-        ./af6Server.sh checkBackup $MD5 $SIZE $MDATE $HOST "$ABS" | tee $TMP.serverOut
+        bash -x ./af6Server.sh checkBackup $MD5 $SIZE $MDATE $HOST "$ABS" | tee $TMP.serverOut
         RETCODE=`tail -1 < $TMP.serverOut`   
-        if [ $RETCODE -eq 'DOBACKUP' ] ; then
-            # we really have to backup this file
+        if [ "$RETCODE" == "DOBACKUP" ] ; then
+            echo "We really have to backup this file $ABS."
             mkdir -p $TMP.dir
             bzip2 --best --stdout --force $1 > $TMP.dir/$MD5.bz2
             BZSIZE=`ls -l $TMP.dir/$MD5.bz2|cut -d' ' -f5`  
-            if [ SIZE -gt BZSIZE ] ; then
-                echo "bla"
+            EINS=`echo $MD5|cut -c1-1`
+            ZWEI=`echo $MD5|cut -c2-2`
+            DREI=`echo $MD5|cut -c3-3`
+            TARGET=$TODIR/$EINS/$ZWEI/$DREI
+            mkdir -p $TARGET
+            if [ $SIZE -gt $BZSIZE ] ; then
+                cp $TMP.dir/$MD5.bz2 $TARGET
             else
-                echo "blub"
+                cp $1 $TARGET/$MD5
             fi
+        elif [ "$RETCODE" == "ALREADYDONE" ] ; then
+            echo "This file $ABS was already backed up."
+        else
+            echo "Strange retcode $RETCODE"
         fi
         af6_mutex_out 
     fi
@@ -190,7 +192,7 @@ af6_end () {
             #mail -s Backup $MAILTO < $TMP.mail
             ssh astrid@elefant mail -s Backup $MAILTO < $TMP.mail
         fi
-        rm $TMP.* 
+        rm -rf $TMP.* 
         exit $1
     fi
 }
