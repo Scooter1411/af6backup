@@ -14,7 +14,6 @@ if [ "$SDIR" = "." ] ; then
 fi
 MYSELF=$SDIR/$0
 TMP=/tmp/$BASE.$$
-#date 1>&2
 logger -s -puser.info -t$BASE.$$ started
 HOST=`hostname`
 #############################################################
@@ -28,9 +27,9 @@ LEGACYLIST=$TODIR/af5backup.names
 NAMESDIR=$TODIR/af6backup.names
 MAILTO="alexander.franz.1411@gmail.com"
 #############################################################
-# Combine, awk-Teil
+# legacyCombine, awk-Teil
 #############################################################
-cat <<EOF > $TMP.legacy.awk
+cat <<EOF > $TMP.legacyCombine.awk
 BEGIN{
     if( ENVIRON["AF5_DEBUG"] == "true" ){
         print "Debug mode."
