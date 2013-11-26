@@ -43,82 +43,135 @@ MAILTO="alexander.franz.1411@gmail.com"
 #############################################################
 # Combine, awk-Teil
 #############################################################
-cat <<EOF > $TMP.combine.awk
+cat <<EOF > $TMP.backup.awk
 BEGIN{
     if( ENVIRON["AF5_DEBUG"] == "true" ){
         print "Debug mode."
         debug=1
     }
-    readnamelist( "$NAMELIST" );
+    af6readlist(inlist);    
 }
 {
-    readnamelist( \$0 );
+    ## legacy read from stdin
+
+    ## legacy file format:
+    ## <md5>;<size>;<crc>;<source path>
+
+    ## af6 file format:
+    ## <md5>;<size>;<mdate>;<host>;<source path>
+
+    l_listcount = split( \$0, l_list, ";" );
+    if( l_listcount == 6 ){
+        # we allow for one semicolon in file name (but remove it for the list)
+        l_list[5] = l_list[5] "_" l_list[6];
+        l_listcount = 5;
+    }
+    if(      l_listcount != 5            ) readerr("wrong.listcount",l_line)
+    else if( length(l_list[1]) != 32     ) readerr("wrong.length.of.md5.sum",l_line)
+    else if( l_list[1] !~ "^[0-9a-f]*\$" ) readerr("md5.not.hexadecimal",l_line)
+    else if( length(l_list[2]) < 1       ) readerr("size.empty",l_line)
+    else if( l_list[2] !~ "^[0-9]*\$"    ) readerr("size.not.a.number",l_line)
+    else if( length(l_list[3]) < 1       ) readerr("mdate.empty",l_line)
+    else if( l_list[3] !~ "^[0-9]*\$"    ) readerr("mdate.empty",l_line)
+    else if( length(l_list[4]) < 1       ) readerr("host.empty",l_line)
+    else if( length(l_list[5]) < 1       ) readerr("file.name.empty",l_line)
+    else {
+        # all is well
+        map_srcname_md5[l_list[5]";"l_list[1]] = 1;
+        if( length( map_md5_size[l_list[1]] ) == 0 ){
+            l_diffnum++;
+            map_md5_size[l_list[1]]       = l_list[2];
+            map_md5_mdate[l_list[1]]      = l_list[3];
+            map_md5_host[l_list[1]]       = l_list[4];
+            res = "DOBACKUP"
+        } else {
+            if( map_md5_size[l_list[1]] != l_list[2] ) readerr("size.collision",l_line);
+            res = "ALREADYDONE"
+        }
+        map_md5_srcname[l_list[1]]=l_list[5];
+        l_num++;
+    }
 }
 END{
-    writenamelist();
-    ## nonobvious way to clean arrays
-    # split("",map_srcname_md5);
-    # split("",map_md5_size);
-    # split("",map_md5_crc);
-    # readnamelist( "$NAMELIST" );
+    af6writelist(outlist);    
+    print res
 }
-EOF
-#############################################################
-# awk-Bibliothek
-#############################################################
-cat <<EOF > $TMP.lib.awk
 function tgtname( md5 ){
     return "$TODIR" "/" substr(md5,1,1) "/" substr(md5,2,1) "/" substr(md5,3,1) "/" md5;
 }
+function filedate( name, l_cmd, l_line, l_word, l_res ){
+    l_cmd = "ls -l --time-style=\"+%Y%m%d%H%M%S\" \\"" tgtname( name ) "\\" 2>/dev/null";
+    l_cmd | getline l_line;
+    close(l_cmd);
+    split( l_line, l_word, " " );
+    if( length( l_word[6] ) > 0 ) {
+        l_res = l_word[6];
+    } else {
+        l_cmd = "ls -l --time-style=\"+%Y%m%d%H%M%S\" \\"" tgtname( name ) ".bz2\\" 2>/dev/null";
+        l_cmd | getline l_line;
+        close(l_cmd);
+        split( l_line, l_word, " " );
+        if( length( l_word[6] ) > 0 ) {
+            l_res = l_word[6];
+        } else {
+            l_res = 20131111111111;
+        }
+    }
+    return l_res;
+}
 function readerr( message, line, l_file ){
-    if( debug ) print message line
+    print message line
     l_file = "$KAPUTT" "." message;
     print line >> l_file;
     errnum++;
 }
-## file format:
-## <md5>;<size>;<crc>;<source path>
+##
+## af6 file format:
+## <md5>;<size>;<mdate>;<host>;<source path>
+##
 ## parameters: filename (the file name)
 ## local variables: l_eof, l_line, l_list, l_num, l_diffnum, l_listcount, l_msg, l_tnull, l_teins
 ## global variables: errnum          (# errors encountered)
 ##                   map_srcname_md5 (map original file name -> md5)
 ##                   map_md5_size    (map md5 -> original size)
-##                   map_md5_crc     (map md5 -> crc)
+##                   map_md5_mdate   (map md5 -> mdate)
 ##                   map_md5_srcname (map md5 -> original file name)
 ##
-function readnamelist( filename, l_eof, l_line, l_list, l_num, l_diffnum, l_listcount, l_msg, l_tnull, l_teins  ){
+function af6readlist( filename, l_eof, l_line, l_list, l_num, l_diffnum, l_listcount, l_msg, l_tnull, l_teins  ){
+
     l_tnull = systime();
     l_num = 0;
     l_diffnum = 0;
     errnum = 0;
-    l_eof = getline l_line  < filename;
+    l_eof = getline l_line < filename;
     while( l_eof == 1 ){
         l_listcount = split( l_line, l_list, ";" );
-        if( l_listcount == 5 ){
+        if( l_listcount == 6 ){
             # we allow for one semicolon in file name (but remove it for the list)
-            l_list[4] = l_list[4] "_" l_list[5];
-            l_listcount = 4;
+            l_list[4] = l_list[5] "_" l_list[6];
+            l_listcount = 5;
         }
-        if(      l_listcount != 4            ) readerr("wrong.listcount",l_line)
+        if(      l_listcount != 5            ) readerr("wrong.listcount",l_line)
         else if( length(l_list[1]) != 32     ) readerr("wrong.length.of.md5.sum",l_line)
         else if( l_list[1] !~ "^[0-9a-f]*\$" ) readerr("md5.not.hexadecimal",l_line)
         else if( length(l_list[2]) < 1       ) readerr("size.empty",l_line)
         else if( l_list[2] !~ "^[0-9]*\$"    ) readerr("size.not.a.number",l_line)
-        else if( length(l_list[3]) < 1       ) readerr("crc.empty",l_line)
-        else if( l_list[3] !~ "^[0-9]*\$"    ) readerr("crc.empty",l_line)
-        else if( length(l_list[4]) < 1       ) readerr("file.name.empty",l_line)
+        else if( length(l_list[3]) < 1       ) readerr("mdate.empty",l_line)
+        else if( l_list[3] !~ "^[0-9]*\$"    ) readerr("mdate.empty",l_line)
+        else if( length(l_list[4]) < 1       ) readerr("host.empty",l_line)
+        else if( length(l_list[5]) < 1       ) readerr("file.name.empty",l_line)
         else {
             # all is well
-            map_srcname_md5[l_list[4]";"l_list[1]] = 1;
+            map_srcname_md5[l_list[5]";"l_list[1]] = 1;
             if( length( map_md5_size[l_list[1]] ) == 0 ){
                 l_diffnum++;
                 map_md5_size[l_list[1]]       = l_list[2];
-                map_md5_crc[l_list[1]]        = l_list[3];
+                map_md5_mdate[l_list[1]]      = l_list[3];
+                map_md5_host[l_list[1]]       = l_list[4];
             } else {
                 if( map_md5_size[l_list[1]] != l_list[2] ) readerr("size.collision",l_line);
-                if( map_md5_crc[l_list[1]] != l_list[3]  ) readerr("crc.collision", l_line);
             }
-            map_md5_srcname[l_list[1]]=l_list[4];
+            map_md5_srcname[l_list[1]]=l_list[5];
             l_num++;
         }
         l_eof = getline l_line  < filename;
@@ -130,27 +183,40 @@ function readnamelist( filename, l_eof, l_line, l_list, l_num, l_diffnum, l_list
     }
     close(filename);   
 }
-## <md5>;<size>;<crc>;<source path>
-function writenamelist( l_key, l_list, l_md5, l_srcname, l_num, l_tnull, l_teins, l_tzwei, l_tdrei ){
+##
+## af6 file format:
+## <md5>;<size>;<mdate>;<host>;<source path>
+##
+## parameters: filename (the file name)
+## local variables: l_eof, l_line, l_list, l_num, l_diffnum, l_listcount, l_msg, l_tnull, l_teins
+## global variables: errnum          (# errors encountered)
+##                   map_srcname_md5 (map original file name -> md5)
+##                   map_md5_size    (map md5 -> original size)
+##                   map_md5_mdate   (map md5 -> mdate)
+##                   map_md5_srcname (map md5 -> original file name)
+##
+function af6writelist( filename, l_key, l_list, l_md5, l_srcname, l_num, l_tnull, l_teins, l_tzwei, l_tdrei ){
+
     l_num  = 0;
     l_diff = 0;
     l_tnull = systime();
-    system("cat /dev/null > $NAMELIST.$$");
+    l_cmd = sprintf("cat /dev/null > %s",filename)
+    print l_cmd
+    system(l_cmd);
+    print "bbb"
     l_teins = systime();
     for( l_key in map_srcname_md5) {
          split( l_key, l_list, ";" );
          l_srcname = l_list[1];
          l_md5     = l_list[2];
          if( length( map_md5_size[l_md5] ) > 0 ){
-             printf("%s;%s;%s;%s\n",l_md5,map_md5_size[l_md5],map_md5_crc[l_md5],l_srcname) >> "$NAMELIST.$$";
+             printf("%s;%s;%s;%s;%s\n",l_md5,map_md5_size[l_md5],map_md5_mdate[l_md5],map_md5_host[l_md5],l_srcname) >> filename;
              l_num++;
          }
     }
-    close("$NAMELIST");   
+    close(filename);   
     l_tzwei = systime();
-    system("mv $NAMELIST.$$ $NAMELIST");
-    l_tdrei = systime();
-    printf("Wrote %7d lines to $NAMELIST.\n",l_num);
+    printf("Wrote %7d lines to %s.\n",l_num,filename);
     if( debug ) {
         printf("   time to clean temporary file: %d sec.\n", l_teins - l_tnull );
         printf("   time to write temporary file: %d sec.\n", l_tzwei - l_teins );
@@ -158,47 +224,7 @@ function writenamelist( l_key, l_list, l_md5, l_srcname, l_num, l_tnull, l_teins
         printf("   total time:                   %d sec.\n", l_tdrei - l_tnull );
     }    
 }
-function filesize( name, l_cmd, l_line, l_word ){
-    l_cmd = "ls -l \\"" name "\\" 2>/dev/null";
-    l_cmd | getline l_line;
-    close(l_cmd);
-    split( l_line, l_word );
-    if( length( l_word[5] > 0 )) {
-        l_res = l_word[5];
-    } else {
-        l_res = 0;
-    }
-    return l_res;
-}
-function filecrc( name, l_cmd, l_line, l_word ){
-    l_cmd = "cksum \\"" name "\\"";
-    l_cmd | getline l_line;
-    close(l_cmd);
-    split( l_line, l_word );
-    return l_word[1];
-}
-function filemd5( name, l_cmd, l_line, l_word ){
-    l_cmd = "md5sum \\"" name "\\"";
-    l_cmd | getline l_line;
-    close(l_cmd);
-    split( l_line, l_word );
-    return l_word[1];
-}
-function filetype( name, l_cmd, l_line, l_word ){
-    l_cmd = "file \\"" name "\\"";
-    l_cmd | getline l_line;
-    close(l_cmd);
-    split( l_line, l_word );
-    if( l_word[2] == "TIFF" && name ~ "[.]nef\$" ) {
-        return "nef";
-    }else{
-        return l_word[2];
-    }
-}
 EOF
-cat $TMP.lib.awk >> $TMP.backup.awk
-cat $TMP.lib.awk >> $TMP.check.awk
-cat $TMP.lib.awk >> $TMP.combine.awk
 ############################################################
 # start mutex section
 ############################################################
@@ -242,10 +268,18 @@ af6_checkBackup () {
     ABS=$5
     echo "ABS=$ABS"|logger -s -puser.info -t$BASE.$$
 
-    SUBMD5=`echo $MD5|cut -c1-3`
-    echo $SUBMD5
+    PATTERN=`echo $MD5|cut -c1-3`
+    echo $PATTERN
 
-    #echo 'DOBACKUP'
+    ./af6ServerLegacy.sh combine $PATTERN
+
+    echo "$MD5;$SIZE;$MDATE;$HOST;$ABS" | awk -f $TMP.backup.awk -F';' \
+        -v pattern=$PATTERN -v inlist=$NAMESDIR/$PATTERN -v outlist=$NAMESDIR/$PATTERN.$$ 
+    
+    diff $NAMESDIR/$PATTERN $NAMESDIR/$PATTERN.$$ | grep '^< ' | cut -c3- > $OLDDIR/$PATTERN.$DATE
+
+    bzip2 --best --force $NAMESDIR/$PATTERN
+    mv $NAMESDIR/$PATTERN.$$ $NAMESDIR/$PATTERN 
 }
 ############################################################
 af6_end () {
