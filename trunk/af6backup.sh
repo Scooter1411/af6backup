@@ -4,7 +4,7 @@
 # Das große Backupskript für zu Hause 
 # Die sechste Inkarnation...
 #############################################################
-# $Header$
+# $Url$
 #############################################################
 # Settings & Lock
 #############################################################
@@ -30,10 +30,17 @@ LEGACYLIST=$TODIR/af5backup.names
 NAMESDIR=$TODIR/af6backup.names
 #############################################################
 MAILTO="alexander.franz.1411@gmail.com"
+#
+# We only have a sendmail on the qnap, prepare the mail the hard way
+#
+echo "Subject: Backup $HOST"  >  $TMP.mail
+echo "From: $MAILTO"          >> $TMP.mail
+echo "To: $MAILTO"            >> $TMP.mail
+echo ""                       >> $TMP.mail
 #############################################################
-# Combine, awk-Teil
+# serverBackup, awk-Teil
 #############################################################
-cat <<EOF > $TMP.backup.awk
+cat <<EOF > $TMP.serverBackup.awk
 BEGIN{
     if( ENVIRON["AF5_DEBUG"] == "true" ){
         print "Debug mode."
@@ -85,6 +92,60 @@ BEGIN{
 END{
     af6writelist(outlist);    
     print res
+}
+EOF
+#############################################################
+# legacyCombine, awk-Teil
+#############################################################
+cat <<EOF > $TMP.legacyCombine.awk
+BEGIN{
+    if( ENVIRON["AF5_DEBUG"] == "true" ){
+        print "Debug mode."
+        debug=1
+    }
+    af6readlist(inlist);    
+}
+{
+    ## legacy read from stdin
+
+    ## legacy file format:
+    ## <md5>;<size>;<crc>;<source path>
+
+    ## af6 file format:
+    ## <md5>;<size>;<mdate>;<host>;<source path>
+
+    if( substr(\$1,1,3) == pattern ){
+        l_listcount = split( \$0, l_list, ";" );
+        if( l_listcount == 5 ){
+            # we allow for one semicolon in file name (but remove it for the list)
+            l_list[4] = l_list[4] "_" l_list[5];
+            l_listcount = 4;
+        }
+        if(      l_listcount != 4            ) readerr("wrong.listcount",l_line)
+        else if( length(l_list[1]) != 32     ) readerr("wrong.length.of.md5.sum",l_line)
+        else if( l_list[1] !~ "^[0-9a-f]*\$" ) readerr("md5.not.hexadecimal",l_line)
+        else if( length(l_list[2]) < 1       ) readerr("size.empty",l_line)
+        else if( l_list[2] !~ "^[0-9]*\$"    ) readerr("size.not.a.number",l_line)
+        else if( length(l_list[4]) < 1       ) readerr("file.name.empty",l_line)
+        else {
+            # all is well
+            map_srcname_md5[l_list[4]";"l_list[1]] = 1;
+            if( length( map_md5_size[l_list[1]] ) == 0 ){
+                l_diffnum++;
+                map_md5_size[l_list[1]]       = l_list[2];
+                map_md5_mdate[l_list[1]]      = filedate( l_list[1] )
+            } else {
+                if( map_md5_size[l_list[1]] != l_list[2] ) readerr("size.collision",l_line);
+            }
+            map_md5_srcname[l_list[1]]=l_list[4];
+            map_md5_host[l_list[1]]="elefant";
+            l_num++;
+        }
+        
+    }
+}
+END{
+    af6writelist(outlist);    
 }
 EOF
 #############################################################
@@ -220,11 +281,8 @@ function af6writelist( filename, l_key, l_list, l_md5, l_srcname, l_num, l_tnull
     }    
 }
 EOF
-cat $TMP.lib.awk >> $TMP.backup.awk
-cat $TMP.lib.awk >> $TMP.check.awk
-cat $TMP.lib.awk >> $TMP.combine.awk
-cat $TMP.lib.awk >> $TMP.greplist.awk
-cat $TMP.lib.awk >> $TMP.killlist.awk
+cat $TMP.lib.awk >> $TMP.serverBackup.awk
+cat $TMP.lib.awk >> $TMP.legacyCombine.awk
 ############################################################
 # start mutex section
 ############################################################
@@ -284,7 +342,7 @@ abspath () {
    esac; 
 }
 ############################################################
-# do the backup
+# do the backup (client side)
 ############################################################
 af6_backup () {
 
@@ -402,16 +460,8 @@ af6_end () {
         DIFFM=`expr \( $DIFF - \( $DIFFH \* 3600 \) \) / 60`
         DIFFS=`expr $DIFF % 60`
         echo|awk "{printf(\"It took me %d:%02d:%02d to get here with RC %d\n\",$DIFFH,$DIFFM,$DIFFS,$1)}"|tee -a $TMP.mail|logger -s -puser.info -t$BASE.$$
-        #umount $MOUNTDIR 2>&1 |logger -s -puser.info -t$BASE.$$
-        #mount | grep $MOUNTDIR > /dev/null
-        #if [ "$?" = "0" ] ; then
-        #    echo "Sleeping somwhat" |logger -s -puser.info -t$BASE.$$
-        #    sleep 300
-        #    umount $MOUNTDIR 2>&1 |logger -s -puser.info -t$BASE.$$
-        #fi
         if [ $1 -ne 99 ] ; then
-            #mail -s Backup $MAILTO < $TMP.mail
-            ssh astrid@elefant mail -s Backup $MAILTO < $TMP.mail
+            ssh $TARGET sendmail -t < $TMP.mail
         fi
         rm -rf $TMP.* 
         exit $1
@@ -496,9 +546,24 @@ af6_fromcron () {
     af6_end 0 
 }
 ############################################################
-# do the backup
+# do the backup (server side)
 ############################################################
 af6_serverBackup () {
+
+    if [ ! -d "$TODIR/f/f/f" ] ; then
+        mkdir -p $TODIR  2>/dev/null
+        for I in 0 1 2 3 4 5 6 7 8 9 a b c d e f
+          do
+            for J in 0 1 2 3 4 5 6 7 8 9 a b c d e f
+              do
+                for K in 0 1 2 3 4 5 6 7 8 9 a b c d e f
+                  do
+                    mkdir -p $TODIR/$I/$J/$K 2>/dev/null
+                    chmod 6755 $TODIR/$I/$J/$K 
+                  done
+              done
+          done
+    fi
 
     # todo check params    
     MD5=$1
@@ -515,7 +580,7 @@ af6_serverBackup () {
     PATTERN=`echo $MD5|cut -c1-3`
     echo $PATTERN
 
-    ./af6backup.sh legacyCombine $PATTERN
+    af6_legacyCombine $PATTERN
 
     echo "$MD5;$SIZE;$MDATE;$HOST;$ABS" | awk -f $TMP.serverBackup.awk -F';' \
         -v pattern=$PATTERN -v inlist=$NAMESDIR/$PATTERN -v outlist=$NAMESDIR/$PATTERN.$$ 
@@ -524,6 +589,44 @@ af6_serverBackup () {
 
     bzip2 --best --force $NAMESDIR/$PATTERN
     mv $NAMESDIR/$PATTERN.$$ $NAMESDIR/$PATTERN 
+}
+############################################################
+# merge legacy name list
+############################################################
+af6_legacyCombine () {
+
+    mkdir -p $NAMESDIR  2>/dev/null
+    mkdir -p $OLDDIR  2>/dev/null
+
+    if [ -z "$1" ] ; then 
+        for I in 0 1 2 3 4 5 6 7 8 9 a b c d e f
+          do
+            for J in 0 1 2 3 4 5 6 7 8 9 a b c d e f
+              do
+                for K in 0 1 2 3 4 5 6 7 8 9 a b c d e f
+                  do
+                    $MYSELF combine $I$J$K
+                  done
+              done
+          done
+    else 
+        af6_mutex_in
+        PATTERN=`echo $1|cut -c1-3|grep '^[0-9a-f][0-9a-f][0-9a-f]$'`
+        if [ -n "$PATTERN" ] ; then 
+            if [ -s $LEGACYLIST ] ; then
+
+                touch $NAMESDIR/$PATTERN
+
+                awk -f $TMP.legacy.awk -F';' \
+                    -v pattern=$PATTERN -v inlist=$NAMESDIR/$PATTERN \
+                    -v outlist=$NAMESDIR/$PATTERN.$$ < $LEGACYLIST
+                diff $NAMESDIR/$PATTERN $NAMESDIR/$PATTERN.$$ | grep '^< ' | cut -c3- > $OLDDIR/$PATTERN.$DATE
+
+                bzip2 --best --force $NAMESDIR/$PATTERN
+                mv $NAMESDIR/$PATTERN.$$ $NAMESDIR/$PATTERN 
+            fi
+        fi
+    fi
 }
 ############################################################
 # main
@@ -565,13 +668,10 @@ elif [ "$1" = "serverBackup" ] ; then
     af6_mutex_in
     shift
     af6_serverBackup $*
-elif [ "$1" = "legacyCombine" ] ; then
-    af6_combine $2
 else
     cat<<EOF
 
 usage:
-    af6backup <opts> clean
     af6backup <opts> backup <dir>
     af6backup <opts> backupcheck <dir>
     af6backup <opts> check
