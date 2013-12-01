@@ -1,7 +1,10 @@
 #!/bin/sh
+# $Revision$
 #############################################################
-# Das große Backupskript für zu Hause (Client)
+# Das große Backupskript für zu Hause 
 # Die sechste Inkarnation...
+#############################################################
+# $Header$
 #############################################################
 # Settings & Lock
 #############################################################
@@ -16,28 +19,16 @@ MYSELF=$SDIR/$0
 TMP=/tmp/$BASE.$$
 logger -s -puser.info -t$BASE.$$ started
 HOST=`hostname`
-OLDTARGET=admin@quokka
 #############################################################
 # main configuration
 #############################################################
+TARGET=admin@quokka
 MOUNTDIR=/share/HDA_DATA/Public
-#MOUNTDIR2=/backup/mount2
-#MAXPROC=20
-#COMMITEVERY=1000
-#SLEEP=10
-#############################################################
 TODIR=$MOUNTDIR/af5backup.dir
 OLDDIR=$TODIR/old
 LEGACYLIST=$TODIR/af5backup.names
 NAMESDIR=$TODIR/af6backup.names
-
-#KAPUTT=$OLDDIR/$BASE.$DATE.$$.kaputt
-#LOSTDIR=/tmp/lost
-#LOSTLIST=$OLDDIR/$BASE.$DATE.$$.lost
-
-#ADDED=$OLDDIR/$BASE.$DATE.$$.added
-#TRASHDIR=/tmp/trash
-#TRASH=$TRASHDIR/$BASE.$DATE.$$.trash
+#############################################################
 MAILTO="alexander.franz.1411@gmail.com"
 #############################################################
 # Combine, awk-Teil
@@ -95,6 +86,11 @@ END{
     af6writelist(outlist);    
     print res
 }
+EOF
+#############################################################
+# awk-Bibliothek
+#############################################################
+cat <<EOF > $TMP.lib.awk
 function tgtname( md5 ){
     return "$TODIR" "/" substr(md5,1,1) "/" substr(md5,2,1) "/" substr(md5,3,1) "/" md5;
 }
@@ -224,6 +220,11 @@ function af6writelist( filename, l_key, l_list, l_md5, l_srcname, l_num, l_tnull
     }    
 }
 EOF
+cat $TMP.lib.awk >> $TMP.backup.awk
+cat $TMP.lib.awk >> $TMP.check.awk
+cat $TMP.lib.awk >> $TMP.combine.awk
+cat $TMP.lib.awk >> $TMP.greplist.awk
+cat $TMP.lib.awk >> $TMP.killlist.awk
 ############################################################
 # start mutex section
 ############################################################
@@ -233,7 +234,34 @@ af6_mutex_in () {
         ps -e|grep `cat $PID` > /dev/null
         if [ "$?" == "0" ] ; then
             echo other process `cat $PID` still running|logger -s -puser.err -t$BASE.$$ 
-            exit 42
+            sleep 10
+            if [ -s $PID ] ; then
+                ps -e|grep `cat $PID` > /dev/null
+                if [ "$?" == "0" ] ; then
+                    echo other process `cat $PID` still running|logger -s -puser.err -t$BASE.$$ 
+                    sleep 100
+                    if [ -s $PID ] ; then
+                        ps -e|grep `cat $PID` > /dev/null
+                        if [ "$?" == "0" ] ; then
+                            echo other process `cat $PID` still running|logger -s -puser.err -t$BASE.$$ 
+                            sleep 1000
+                            if [ -s $PID ] ; then
+                                ps -e|grep `cat $PID` > /dev/null
+                                if [ "$?" == "0" ] ; then
+                                    echo other process `cat $PID` still running|logger -s -puser.err -t$BASE.$$ 
+                                    exit 42
+                                else
+                                    echo other process `cat $PID` died some time ago|tee -a $TMP.mail|logger -s -puser.err -t$BASE.$$ 
+                                fi
+                           fi
+                       else
+                    echo other process `cat $PID` died some time ago|tee -a $TMP.mail|logger -s -puser.err -t$BASE.$$ 
+                fi
+            fi
+                       else
+                    echo other process `cat $PID` died some time ago|tee -a $TMP.mail|logger -s -puser.err -t$BASE.$$ 
+                fi
+            fi
         else 
             echo other process `cat $PID` died some time ago|tee -a $TMP.mail|logger -s -puser.err -t$BASE.$$ 
         fi
@@ -249,37 +277,122 @@ af6_mutex_out () {
 ############################################################
 # canonical path name
 ############################################################
-abspath () { case "$1" in /*)printf "%s\n" "$1";; *)printf "%s\n" "$PWD/$1";; esac; }
+abspath () { 
+   case "$1" in 
+       /*)printf "%s\n" "$1";;
+       *)printf  "%s\n" "$PWD/$1";; 
+   esac; 
+}
 ############################################################
 # do the backup
 ############################################################
-af6_checkBackup () {
+af6_backup () {
 
-    # todo check params    
-    MD5=$1
-    echo "MD5=$MD5"|logger -s -puser.info -t$BASE.$$
-    SIZE=$2
-    echo "SIZE=$SIZE"|logger -s -puser.info -t$BASE.$$
-    MDATE=$3
-    echo "MDATE=$MDATE"|logger -s -puser.info -t$BASE.$$
-    HOST=$4
-    echo "HOST=$HOST"|logger -s -puser.info -t$BASE.$$
-    ABS=$5
-    echo "ABS=$ABS"|logger -s -puser.info -t$BASE.$$
-
-    PATTERN=`echo $MD5|cut -c1-3`
-    echo $PATTERN
-
-    ./af6ServerLegacy.sh combine $PATTERN
-
-    echo "$MD5;$SIZE;$MDATE;$HOST;$ABS" | awk -f $TMP.backup.awk -F';' \
-        -v pattern=$PATTERN -v inlist=$NAMESDIR/$PATTERN -v outlist=$NAMESDIR/$PATTERN.$$ 
-    
-    diff $NAMESDIR/$PATTERN $NAMESDIR/$PATTERN.$$ | grep '^< ' | cut -c3- > $OLDDIR/$PATTERN.$DATE
-
-    bzip2 --best --force $NAMESDIR/$PATTERN
-    mv $NAMESDIR/$PATTERN.$$ $NAMESDIR/$PATTERN 
+    if [ -d "$1" ] ; then
+        find $1 -type f $LAZY -exec $MYSELF backup {} \;
+    elif [ -z "$1" ] ; then 
+        find . -type f $LAZY -exec $MYSELF backup {} \;
+    elif [ -f "$1" ] ; then
+        af6_mutex_in
+        MD5=`md5sum $1|cut -d' ' -f1`
+        LS=`ls -l --time-style="+%Y%m%d%H%M%S" $1`
+        SIZE=`echo $LS|cut -d' ' -f5`
+        MDATE=`echo $LS|cut -d' ' -f6`
+        ABS=`abspath $1`
+        #ssh $TARGET af6Server backup $MD5 $SIZE $MDATE $HOST $ABS 
+        echo "checkBackup $MD5 $SIZE $MDATE $HOST \"$ABS\""|logger -s -puser.info -t$BASE.$$
+        bash -x ./af6Server.sh checkBackup $MD5 $SIZE $MDATE $HOST "$ABS" | tee $TMP.serverOut
+        RETCODE=`tail -1 < $TMP.serverOut`   
+        if [ "$RETCODE" == "DOBACKUP" ] ; then
+            echo "We really have to backup this file $ABS."
+            mkdir -p $TMP.dir
+            bzip2 --best --stdout --force $1 > $TMP.dir/$MD5.bz2
+            BZSIZE=`ls -l $TMP.dir/$MD5.bz2|cut -d' ' -f5`  
+            EINS=`echo $MD5|cut -c1-1`
+            ZWEI=`echo $MD5|cut -c2-2`
+            DREI=`echo $MD5|cut -c3-3`
+            TARGET=$TODIR/$EINS/$ZWEI/$DREI
+            mkdir -p $TARGET
+            if [ $SIZE -gt $BZSIZE ] ; then
+                cp $TMP.dir/$MD5.bz2 $TARGET
+            else
+                cp $1 $TARGET/$MD5
+            fi
+        elif [ "$RETCODE" == "ALREADYDONE" ] ; then
+            echo "This file $ABS was already backed up."
+        else
+            echo "Strange retcode $RETCODE"
+        fi
+        af6_mutex_out 
+    fi
 }
+#############################################################
+# Erstmal räumen wir auf.
+#############################################################
+af6_clean () {
+    find /tmp -type f -name "*mpg"  -mtime +1 -exec rm -f {} \;
+    find /tmp -type f -name "*mpeg" -mtime +1 -exec rm -f {} \;
+    find /tmp -type f -name "*avi"  -mtime +1 -exec rm -f {} \;
+    find /tmp -type f -name "*wmv"  -mtime +1 -exec rm -f {} \;
+    
+    for i in `find /home -type d -name Trash`
+      do 
+        find $i -mtime +1 -type f -exec rm {} \; -print|tee -a $TMP.mail|logger -s -puser.info -t$BASE.$$ 2>&1 
+      done
+    
+    for i in `find /home -type d -name .mozilla`
+      do 
+        for j in `find $i -type d -name "Cache*"`
+          do
+            find $j -mtime +1 -type f -exec rm {} \; -print|tee -a $TMP.mail|logger -s -puser.info -t$BASE.$$ 2>&1 
+          done
+      done
+    
+    for i in `find /home -type d -name .netscape`
+      do 
+        for j in `find $i -type d -name "cache"`
+          do
+            find $j -mtime +1 -type f -exec rm {} \; -print|tee -a $TMP.mail|logger -s -puser.info -t$BASE.$$ 2>&1 
+          done
+      done
+    
+    for i in `find /home -type d -name .kde`
+      do 
+        for j in `find $i -type d -name "cache"`
+          do
+            find $j -mtime +1 -type f -exec rm {} \; -print|tee -a $TMP.mail|logger -s -puser.info -t$BASE.$$ 2>&1 
+          done
+      done
+    
+    for i in `find /root -type d -name Trash`
+      do 
+        find $i -mtime +1 -type f -exec rm {} \; -print|tee -a $TMP.mail|logger -s -puser.info -t$BASE.$$ 2>&1 
+      done
+    
+    for i in `find /root -type d -name .mozilla`
+      do 
+        for j in `find $i -type d -name "Cache*"`
+          do
+            find $j -mtime +1 -type f -exec rm {} \; -print|tee -a $TMP.mail|logger -s -puser.info -t$BASE.$$ 2>&1 
+          done
+      done
+    
+    for i in `find /root -type d -name .netscape`
+      do 
+        for j in `find $i -type d -name "cache"`
+          do
+            find $j -mtime +1 -type f -exec rm {} \; -print|tee -a $TMP.mail|logger -s -puser.info -t$BASE.$$ 2>&1 
+          done
+      done
+    
+    for i in `find /root -type d -name .kde`
+      do 
+        for j in `find $i -type d -name "cache"`
+          do
+            find $j -mtime +1 -type f -exec rm {} \; -print|tee -a $TMP.mail|logger -s -puser.info -t$BASE.$$ 2>&1 
+          done
+      done
+}    
 ############################################################
 af6_end () {
     if [ ! "$FROMCRON" = "1" ] ; then
@@ -300,38 +413,117 @@ af6_end () {
             #mail -s Backup $MAILTO < $TMP.mail
             ssh astrid@elefant mail -s Backup $MAILTO < $TMP.mail
         fi
-        rm $TMP.* 
-        af6_mutex_out 
+        rm -rf $TMP.* 
         exit $1
     fi
 }
-############################################################
-af6_combine () {
+#############################################################
+# 
+#############################################################
+af6_fromcron () {
 
-    mkdir -p $NAMESDIR  2>/dev/null
-    if [ -z "$1" ] ; then 
-        for I in 0 1 2 3 4 5 6 7 8 9 a b c d e f
-          do
-            for J in 0 1 2 3 4 5 6 7 8 9 a b c d e f
-              do
-                for K in 0 1 2 3 4 5 6 7 8 9 a b c d e f
-                  do
-                    $MYSELF $I$J$K
-                  done
-              done
-          done
-    else 
-        PATTERN=`echo $1|cut -c1-3|grep '^[0-9a-f][0-9a-f][0-9a-f]$'`
-        if [ -n "$PATTERN" ] ; then 
-            if [ -s $LEGACYLIST ] ; then
-                if [ -s $NAMESDIR/$PATTERN ] ; then
-                    echo '123'
-                else
-                    echo '456'
-                fi
-            fi
+    # only once daily
+    NOW=`date +%s`
+    if [ -f $TODIR/$BASE.stamp ] ; then
+        LAST=`cat $TODIR/$BASE.stamp`
+        DIFF=`expr $NOW - $LAST`
+        # slightly drifting backwards
+        if [ "$DIFF" -lt "64800" ] ; then
+            echo Not necessary yet.|logger -s -puser.info -t$BASE.$$
+            af6_end 99
+        else 
+            echo $NOW > $TODIR/$BASE.stamp
         fi
+    else 
+        echo $NOW > $TODIR/$BASE.stamp
     fi
+
+    export FROMCRON=1
+    af6_clean
+    if [ "$HOST" = "elefant" ] ; then
+        af6_combine
+
+        #DOM=`date +%d`
+        #if [ "$DOM" = "13" ] ; then
+        #    # once a month checking
+        #    af6_check
+        #else
+        #    if [ "$DOM" = "26" ] ; then
+        #        # once a month not lazy
+        #        export LAZY=""
+        #    fi
+            af6_backup /3data/Fotos
+            af6_backup /1data/Video
+            af6_backup /1data/astrid
+            af6_backup /1data/ich
+            af6_backup /0data/Musik
+            af6_backup /root
+            af6_backup /etc
+            af6_backup /1data/physhome/astrid
+            af6_backup /1data/physhome/astrid.old
+            af6_backup /1data/physhome/ich.old
+            af6_backup /home/ich
+            af6_backup /data/repository/repos
+	    
+            af6_backup /lost+found
+            af6_backup /0data/lost+found
+            af6_backup /1data/lost+found
+            af6_backup /2data/lost+found
+            af6_backup /3data/lost+found
+            
+            /sbin/mount.cifs //drache/C /dracheC -o user=ich,password=cc440a08 2>&1  > $TMP.mountout
+            RC=$?
+            echo "RC $RC" >>  $TMP.mountout
+            cat $TMP.mountout >> $TMP.mail
+            logger -s -puser.info -t$BASE.$$ < $TMP.mountout
+            if [ "$RC" = "0" ] ; then
+                 af6_backup /dracheC/Users/ich/Documents
+                 af6_backup /dracheC/Users/ich/Videos
+                 af6_backup /dracheC/Users/ich/Music
+                 af6_backup /dracheC/Users/ich/AppData
+                 sleep 3
+                 /bin/umount /dracheC
+            fi
+                
+            af6_combine
+        #fi 
+
+        df $MOUNTDIR |tee -a $TMP.mail|logger -s -puser.info -t$BASE.$$
+        df $MOUNTDIR2|tee -a $TMP.mail|logger -s -puser.info -t$BASE.$$
+        #af6_finally
+    fi
+    FROMCRON=0
+    af6_end 0 
+}
+############################################################
+# do the backup
+############################################################
+af6_serverBackup () {
+
+    # todo check params    
+    MD5=$1
+    echo "MD5=$MD5"|logger -s -puser.info -t$BASE.$$
+    SIZE=$2
+    echo "SIZE=$SIZE"|logger -s -puser.info -t$BASE.$$
+    MDATE=$3
+    echo "MDATE=$MDATE"|logger -s -puser.info -t$BASE.$$
+    HOST=$4
+    echo "HOST=$HOST"|logger -s -puser.info -t$BASE.$$
+    ABS=$5
+    echo "ABS=$ABS"|logger -s -puser.info -t$BASE.$$
+
+    PATTERN=`echo $MD5|cut -c1-3`
+    echo $PATTERN
+
+    ./af6backup.sh legacyCombine $PATTERN
+
+    echo "$MD5;$SIZE;$MDATE;$HOST;$ABS" | awk -f $TMP.serverBackup.awk -F';' \
+        -v pattern=$PATTERN -v inlist=$NAMESDIR/$PATTERN -v outlist=$NAMESDIR/$PATTERN.$$ 
+    
+    diff $NAMESDIR/$PATTERN $NAMESDIR/$PATTERN.$$ | grep '^< ' | cut -c3- > $OLDDIR/$PATTERN.$DATE
+
+    bzip2 --best --force $NAMESDIR/$PATTERN
+    mv $NAMESDIR/$PATTERN.$$ $NAMESDIR/$PATTERN 
 }
 ############################################################
 # main
@@ -365,12 +557,15 @@ if [ "$1" = "--debug" ] ; then
     shift
 fi
 
-if [ "$1" = "checkBackup" ] ; then
+if [ "$1" = "backup" ] ; then
+    af6_backup $2
+elif [ "$1" = "fromcron" ] ; then
+    af6_fromcron
+elif [ "$1" = "serverBackup" ] ; then
     af6_mutex_in
     shift
-    af6_checkBackup $*
-elif [ "$1" = "combine" ] ; then
-    af6_mutex_in
+    af6_serverBackup $*
+elif [ "$1" = "legacyCombine" ] ; then
     af6_combine $2
 else
     cat<<EOF
@@ -393,4 +588,3 @@ EOF
     af6_end 1
 fi
 af6_end 0
-EOF

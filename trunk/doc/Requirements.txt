@@ -1,9 +1,10 @@
 Client-Server-Backup-Lösung
 
-- Backup auf eine Linux-Maschine (qnap NAS)
+- Backup auf eine Linux-Maschine (z.B. qnap NAS)
 - Backup von Linux & Windows-Clients
 - Backup nur file-basiert, kein Systembackup
 - redundanzfreie Ablage (gleiche Datei auf 5 Maschinen in 10 Verzeichnissen nur einmal im Backup)
-- steuerbare Retention (von der Datei an Position x werden nur die 5 letzten Kopien aufbewahrt)
-- Backup benutzt Standardtools (md5sum, ssh, bzip2)
+- steuerbare Retention (von der Datei an Position x werden nur die 5 letzten Kopien aufbewahrt, TODO)
+- Backup benutzt Standardtools (md5sum, ssh, bzip2, awk)
 - einfaches Restore nur mit Standardtools (grep, bzip2)
+- nur ein Skript wegen einfachem Deployment, ggf. Versionskontrolle (?)
