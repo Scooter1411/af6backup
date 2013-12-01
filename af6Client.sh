@@ -40,7 +40,34 @@ af6_mutex_in () {
         ps -e|grep `cat $PID` > /dev/null
         if [ "$?" == "0" ] ; then
             echo other process `cat $PID` still running|logger -s -puser.err -t$BASE.$$ 
-            exit 42
+            sleep 10
+            if [ -s $PID ] ; then
+                ps -e|grep `cat $PID` > /dev/null
+                if [ "$?" == "0" ] ; then
+                    echo other process `cat $PID` still running|logger -s -puser.err -t$BASE.$$ 
+                    sleep 100
+                    if [ -s $PID ] ; then
+                        ps -e|grep `cat $PID` > /dev/null
+                        if [ "$?" == "0" ] ; then
+                            echo other process `cat $PID` still running|logger -s -puser.err -t$BASE.$$ 
+                            sleep 1000
+                            if [ -s $PID ] ; then
+                                ps -e|grep `cat $PID` > /dev/null
+                                if [ "$?" == "0" ] ; then
+                                    echo other process `cat $PID` still running|logger -s -puser.err -t$BASE.$$ 
+                                    exit 42
+                                else
+                                    echo other process `cat $PID` died some time ago|tee -a $TMP.mail|logger -s -puser.err -t$BASE.$$ 
+                                fi
+                           fi
+                       else
+                    echo other process `cat $PID` died some time ago|tee -a $TMP.mail|logger -s -puser.err -t$BASE.$$ 
+                fi
+            fi
+                       else
+                    echo other process `cat $PID` died some time ago|tee -a $TMP.mail|logger -s -puser.err -t$BASE.$$ 
+                fi
+            fi
         else 
             echo other process `cat $PID` died some time ago|tee -a $TMP.mail|logger -s -puser.err -t$BASE.$$ 
         fi
