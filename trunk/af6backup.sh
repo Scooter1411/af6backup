@@ -17,7 +17,7 @@ if [ "$SDIR" = "." ] ; then
 fi
 MYSELF=$SDIR/$0
 TMP=/tmp/$BASE.$$
-logger -s -puser.info -t$BASE.$$ started
+#logger -s -puser.info -t$BASE.$$ started
 HOST=`hostname`
 #############################################################
 # main configuration
@@ -257,9 +257,7 @@ function af6writelist( filename, l_key, l_list, l_md5, l_srcname, l_num, l_tnull
     l_diff = 0;
     l_tnull = systime();
     l_cmd = sprintf("cat /dev/null > %s",filename)
-    print l_cmd
     system(l_cmd);
-    print "bbb"
     l_teins = systime();
     for( l_key in map_srcname_md5) {
          split( l_key, l_list, ";" );
@@ -361,10 +359,10 @@ af6_backup () {
         #ssh $TARGET af6Server backup $MD5 $SIZE $MDATE $HOST $ABS 
         echo "serverBackup $MD5 $SIZE $MDATE $HOST \"$ABS\""|logger -s -puser.info -t$BASE.$$
         #echo "DOBACKUP" > $TMP.serverOut
-        ./af6backup.sh serverBackup $MD5 $SIZE $MDATE $HOST "$ABS" | tee $TMP.serverOut
-        RETCODE=`tail -1 < $TMP.serverOut`   
+        ./af6backup.sh serverBackup $MD5 $SIZE $MDATE $HOST "$ABS" | tee -a $TMP.mail |logger -s -puser.info -t$BASE.$$
+        RETCODE=`tail -1 < $TMP.mail`   
         if [ "$RETCODE" == "DOBACKUP" ] ; then
-            echo "We really have to backup this file $ABS."
+            echo "We really have to backup this file $ABS."|tee -a $TMP.mail |logger -s -puser.info -t$BASE.$$
             mkdir -p $TMP.dir
             bzip2 --best --stdout --force $1 > $TMP.dir/$MD5.bz2
             BZSIZE=`ls -l $TMP.dir/$MD5.bz2|cut -d' ' -f5`  
@@ -379,9 +377,9 @@ af6_backup () {
                 cp $1 $DIR/$MD5
             fi
         elif [ "$RETCODE" == "ALREADYDONE" ] ; then
-            echo "This file $ABS was already backed up."
+            echo "This file $ABS was already backed up."|tee -a $TMP.mail |logger -s -puser.info -t$BASE.$$
         else
-            echo "Strange retcode $RETCODE"
+            echo "Strange retcode $RETCODE"|tee -a $TMP.mail |logger -s -puser.info -t$BASE.$$
         fi
         af6_mutex_out 
     fi
@@ -389,7 +387,7 @@ af6_backup () {
 }
 ############################################################
 af6_end () {
-    set -x
+    #set -x
     if [ ! "$NOMAIL" = "true" ] ; then
         STOP=`date +%s`
         DIFF=`expr $STOP - $START`
@@ -397,6 +395,10 @@ af6_end () {
         DIFFM=`expr \( $DIFF - \( $DIFFH \* 3600 \) \) / 60`
         DIFFS=`expr $DIFF % 60`
         echo|awk "{printf(\"It took me %d:%02d:%02d to get here with RC %d\n\",$DIFFH,$DIFFM,$DIFFS,$1)}"|tee -a $TMP.mail|logger -s -puser.info -t$BASE.$$
+
+        echo $TMP.mail
+        wc -l  $TMP.mail
+
         if [ $1 -ne 99 ] ; then
             ssh $TARGET sendmail -t < $TMP.mail
         fi
@@ -504,19 +506,17 @@ af6_serverBackup () {
 
     # todo check params    
     MD5=$1
-    echo "MD5=$MD5"|logger -s -puser.info -t$BASE.$$
+    #echo "MD5=$MD5"|logger -s -puser.info -t$BASE.$$
     SIZE=$2
-    echo "SIZE=$SIZE"|logger -s -puser.info -t$BASE.$$
+    #echo "SIZE=$SIZE"|logger -s -puser.info -t$BASE.$$
     MDATE=$3
-    echo "MDATE=$MDATE"|logger -s -puser.info -t$BASE.$$
+    #echo "MDATE=$MDATE"|logger -s -puser.info -t$BASE.$$
     HOST=$4
-    echo "HOST=$HOST"|logger -s -puser.info -t$BASE.$$
+    #echo "HOST=$HOST"|logger -s -puser.info -t$BASE.$$
     ABS=$5
-    echo "ABS=$ABS"|logger -s -puser.info -t$BASE.$$
+    #echo "ABS=$ABS"|logger -s -puser.info -t$BASE.$$
 
     PATTERN=`echo $MD5|cut -c1-3`
-    echo $PATTERN
-
     af6_legacyCombine $PATTERN
 
     echo "$MD5;$SIZE;$MDATE;$HOST;$ABS" | awk -f $TMP.serverBackup.awk -F';' \
@@ -551,16 +551,15 @@ af6_legacyCombine () {
         PATTERN=`echo $1|cut -c1-3|grep '^[0-9a-f][0-9a-f][0-9a-f]$'`
         if [ -n "$PATTERN" ] ; then 
             if [ -s $LEGACYLIST ] ; then
-
-                touch $NAMESDIR/$PATTERN
-
-                awk -f $TMP.legacyCombine.awk -F';' \
-                    -v pattern=$PATTERN -v inlist=$NAMESDIR/$PATTERN \
-                    -v outlist=$NAMESDIR/$PATTERN.$$ < $LEGACYLIST
-                diff $NAMESDIR/$PATTERN $NAMESDIR/$PATTERN.$$ | grep '^< ' | cut -c3- > $OLDDIR/$PATTERN.$DATE
-
-                bzip2 --best --force $NAMESDIR/$PATTERN
-                mv $NAMESDIR/$PATTERN.$$ $NAMESDIR/$PATTERN 
+                if [ $LEGACYLIST -nt $NAMESDIR/$PATTERN ] ; then
+                    awk -f $TMP.legacyCombine.awk -F';' \
+                        -v pattern=$PATTERN -v inlist=$NAMESDIR/$PATTERN \
+                        -v outlist=$NAMESDIR/$PATTERN.$$ < $LEGACYLIST
+                    diff $NAMESDIR/$PATTERN $NAMESDIR/$PATTERN.$$ | grep '^< ' | cut -c3- > $OLDDIR/$PATTERN.$DATE
+    
+                    bzip2 --best --force $NAMESDIR/$PATTERN
+                    mv $NAMESDIR/$PATTERN.$$ $NAMESDIR/$PATTERN 
+                fi
             fi
         fi
     fi
@@ -597,7 +596,7 @@ if [ "$1" = "--nomail" ] ; then
     shift
 fi
 
-set -x
+#set -x
 if [ "$1" = "backup" ] ; then
     af6_backup $2
 elif [ "$1" = "fromcron" ] ; then
