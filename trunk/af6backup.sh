@@ -347,19 +347,21 @@ abspath () {
 af6_backup () {
 
     if [ -d "$1" ] ; then
-        find $1 -type f $LAZY -exec $MYSELF backup {} \;
+        find $1 -type f $LAZY -exec $MYSELF --nomail backup {} \;
     elif [ -z "$1" ] ; then 
-        find . -type f $LAZY -exec $MYSELF backup {} \;
+        find . -type f $LAZY -exec $MYSELF --nomail backup {} \;
     elif [ -f "$1" ] ; then
         af6_mutex_in
+        #set -x
         MD5=`md5sum $1|cut -d' ' -f1`
         LS=`ls -l --time-style="+%Y%m%d%H%M%S" $1`
         SIZE=`echo $LS|cut -d' ' -f5`
         MDATE=`echo $LS|cut -d' ' -f6`
         ABS=`abspath $1`
         #ssh $TARGET af6Server backup $MD5 $SIZE $MDATE $HOST $ABS 
-        echo "checkBackup $MD5 $SIZE $MDATE $HOST \"$ABS\""|logger -s -puser.info -t$BASE.$$
-        bash -x ./af6Server.sh checkBackup $MD5 $SIZE $MDATE $HOST "$ABS" | tee $TMP.serverOut
+        echo "serverBackup $MD5 $SIZE $MDATE $HOST \"$ABS\""|logger -s -puser.info -t$BASE.$$
+        #echo "DOBACKUP" > $TMP.serverOut
+        ./af6backup.sh serverBackup $MD5 $SIZE $MDATE $HOST "$ABS" | tee $TMP.serverOut
         RETCODE=`tail -1 < $TMP.serverOut`   
         if [ "$RETCODE" == "DOBACKUP" ] ; then
             echo "We really have to backup this file $ABS."
@@ -369,12 +371,12 @@ af6_backup () {
             EINS=`echo $MD5|cut -c1-1`
             ZWEI=`echo $MD5|cut -c2-2`
             DREI=`echo $MD5|cut -c3-3`
-            TARGET=$TODIR/$EINS/$ZWEI/$DREI
-            mkdir -p $TARGET
+            DIR=$TODIR/$EINS/$ZWEI/$DREI
+            mkdir -p $DIR
             if [ $SIZE -gt $BZSIZE ] ; then
-                cp $TMP.dir/$MD5.bz2 $TARGET
+                cp $TMP.dir/$MD5.bz2 $DIR
             else
-                cp $1 $TARGET/$MD5
+                cp $1 $DIR/$MD5
             fi
         elif [ "$RETCODE" == "ALREADYDONE" ] ; then
             echo "This file $ABS was already backed up."
@@ -383,77 +385,12 @@ af6_backup () {
         fi
         af6_mutex_out 
     fi
+    af6_end 0
 }
-#############################################################
-# Erstmal räumen wir auf.
-#############################################################
-af6_clean () {
-    find /tmp -type f -name "*mpg"  -mtime +1 -exec rm -f {} \;
-    find /tmp -type f -name "*mpeg" -mtime +1 -exec rm -f {} \;
-    find /tmp -type f -name "*avi"  -mtime +1 -exec rm -f {} \;
-    find /tmp -type f -name "*wmv"  -mtime +1 -exec rm -f {} \;
-    
-    for i in `find /home -type d -name Trash`
-      do 
-        find $i -mtime +1 -type f -exec rm {} \; -print|tee -a $TMP.mail|logger -s -puser.info -t$BASE.$$ 2>&1 
-      done
-    
-    for i in `find /home -type d -name .mozilla`
-      do 
-        for j in `find $i -type d -name "Cache*"`
-          do
-            find $j -mtime +1 -type f -exec rm {} \; -print|tee -a $TMP.mail|logger -s -puser.info -t$BASE.$$ 2>&1 
-          done
-      done
-    
-    for i in `find /home -type d -name .netscape`
-      do 
-        for j in `find $i -type d -name "cache"`
-          do
-            find $j -mtime +1 -type f -exec rm {} \; -print|tee -a $TMP.mail|logger -s -puser.info -t$BASE.$$ 2>&1 
-          done
-      done
-    
-    for i in `find /home -type d -name .kde`
-      do 
-        for j in `find $i -type d -name "cache"`
-          do
-            find $j -mtime +1 -type f -exec rm {} \; -print|tee -a $TMP.mail|logger -s -puser.info -t$BASE.$$ 2>&1 
-          done
-      done
-    
-    for i in `find /root -type d -name Trash`
-      do 
-        find $i -mtime +1 -type f -exec rm {} \; -print|tee -a $TMP.mail|logger -s -puser.info -t$BASE.$$ 2>&1 
-      done
-    
-    for i in `find /root -type d -name .mozilla`
-      do 
-        for j in `find $i -type d -name "Cache*"`
-          do
-            find $j -mtime +1 -type f -exec rm {} \; -print|tee -a $TMP.mail|logger -s -puser.info -t$BASE.$$ 2>&1 
-          done
-      done
-    
-    for i in `find /root -type d -name .netscape`
-      do 
-        for j in `find $i -type d -name "cache"`
-          do
-            find $j -mtime +1 -type f -exec rm {} \; -print|tee -a $TMP.mail|logger -s -puser.info -t$BASE.$$ 2>&1 
-          done
-      done
-    
-    for i in `find /root -type d -name .kde`
-      do 
-        for j in `find $i -type d -name "cache"`
-          do
-            find $j -mtime +1 -type f -exec rm {} \; -print|tee -a $TMP.mail|logger -s -puser.info -t$BASE.$$ 2>&1 
-          done
-      done
-}    
 ############################################################
 af6_end () {
-    if [ ! "$FROMCRON" = "1" ] ; then
+    set -x
+    if [ ! "$NOMAIL" = "true" ] ; then
         STOP=`date +%s`
         DIFF=`expr $STOP - $START`
         DIFFH=`expr $DIFF / 3600`
@@ -610,14 +547,14 @@ af6_legacyCombine () {
               done
           done
     else 
-        af6_mutex_in
+        #af6_mutex_in
         PATTERN=`echo $1|cut -c1-3|grep '^[0-9a-f][0-9a-f][0-9a-f]$'`
         if [ -n "$PATTERN" ] ; then 
             if [ -s $LEGACYLIST ] ; then
 
                 touch $NAMESDIR/$PATTERN
 
-                awk -f $TMP.legacy.awk -F';' \
+                awk -f $TMP.legacyCombine.awk -F';' \
                     -v pattern=$PATTERN -v inlist=$NAMESDIR/$PATTERN \
                     -v outlist=$NAMESDIR/$PATTERN.$$ < $LEGACYLIST
                 diff $NAMESDIR/$PATTERN $NAMESDIR/$PATTERN.$$ | grep '^< ' | cut -c3- > $OLDDIR/$PATTERN.$DATE
@@ -635,16 +572,16 @@ if [ "$1" = "--force" ] ; then
     export FORCE=true
     shift
 fi
-if [ "$1" = "--debug" ] ; then
-    export AF6_DEBUG=true
+if [ "$1" = "--nomail" ] ; then
+    export NOMAIL=true
     shift
 fi
 if [ "$1" = "--lazy"  ] ; then
     export LAZY="-mtime -3"
     shift
 fi
-if [ "$1" = "--debug" ] ; then
-    export AF6_DEBUG=true
+if [ "$1" = "--nomail" ] ; then
+    export NOMAIL=true
     shift
 fi
 if [ "$1" = "--force" ] ; then
@@ -655,17 +592,18 @@ if [ "$1" = "--lazy"  ] ; then
     export LAZY="-mtime -3"
     shift
 fi
-if [ "$1" = "--debug" ] ; then
-    export AF6_DEBUG=true
+if [ "$1" = "--nomail" ] ; then
+    export NOMAIL=true
     shift
 fi
 
+set -x
 if [ "$1" = "backup" ] ; then
     af6_backup $2
 elif [ "$1" = "fromcron" ] ; then
     af6_fromcron
 elif [ "$1" = "serverBackup" ] ; then
-    af6_mutex_in
+    #af6_mutex_in
     shift
     af6_serverBackup $*
 else
@@ -673,17 +611,11 @@ else
 
 usage:
     af6backup <opts> backup <dir>
-    af6backup <opts> backupcheck <dir>
-    af6backup <opts> check
-    af6backup <opts> kill
-    af6backup <opts> killlist <list>
-    af6backup <opts> greplist <list>
-    af6backup <opts> fromcron
 
 <opts>:
-    --force rebackup everything
-    --debug some output
-    --lazy  consider only changes of last week
+    --force   rebackup everything
+    --nomail  no mail sent
+    --lazy    consider only changes of last week
 EOF
     af6_end 1
 fi
