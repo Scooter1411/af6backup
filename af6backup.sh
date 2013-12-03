@@ -345,12 +345,12 @@ abspath () {
 af6_backup () {
 
     if [ -d "$1" ] ; then
-        find $1 -type f $LAZY -exec $MYSELF --nomail backup {} \;
+        find $1 -type f $LAZY -exec $MYSELF --nomail backup {} \;| tee -a $TMP.mail |logger -s -puser.info -t$BASE.$$
     elif [ -z "$1" ] ; then 
-        find . -type f $LAZY -exec $MYSELF --nomail backup {} \;
+        find . -type f $LAZY -exec $MYSELF --nomail backup {} \;| tee -a $TMP.mail |logger -s -puser.info -t$BASE.$$
     elif [ -f "$1" ] ; then
         af6_mutex_in
-        #set -x
+        set -x
         MD5=`md5sum $1|cut -d' ' -f1`
         LS=`ls -l --time-style="+%Y%m%d%H%M%S" $1`
         SIZE=`echo $LS|cut -d' ' -f5`
@@ -360,6 +360,8 @@ af6_backup () {
         echo "serverBackup $MD5 $SIZE $MDATE $HOST \"$ABS\""|logger -s -puser.info -t$BASE.$$
         #echo "DOBACKUP" > $TMP.serverOut
         ./af6backup.sh serverBackup $MD5 $SIZE $MDATE $HOST "$ABS" | tee -a $TMP.mail |logger -s -puser.info -t$BASE.$$
+
+        cat $TMP.mail
         RETCODE=`tail -1 < $TMP.mail`   
         if [ "$RETCODE" == "DOBACKUP" ] ; then
             echo "We really have to backup this file $ABS."|tee -a $TMP.mail |logger -s -puser.info -t$BASE.$$
@@ -370,7 +372,6 @@ af6_backup () {
             ZWEI=`echo $MD5|cut -c2-2`
             DREI=`echo $MD5|cut -c3-3`
             DIR=$TODIR/$EINS/$ZWEI/$DREI
-            mkdir -p $DIR
             if [ $SIZE -gt $BZSIZE ] ; then
                 cp $TMP.dir/$MD5.bz2 $DIR
             else
@@ -381,13 +382,14 @@ af6_backup () {
         else
             echo "Strange retcode $RETCODE"|tee -a $TMP.mail |logger -s -puser.info -t$BASE.$$
         fi
+        cat $TMP.mail
         af6_mutex_out 
     fi
     af6_end 0
 }
 ############################################################
 af6_end () {
-    #set -x
+    set -x
     if [ ! "$NOMAIL" = "true" ] ; then
         STOP=`date +%s`
         DIFF=`expr $STOP - $START`
@@ -395,15 +397,13 @@ af6_end () {
         DIFFM=`expr \( $DIFF - \( $DIFFH \* 3600 \) \) / 60`
         DIFFS=`expr $DIFF % 60`
         echo|awk "{printf(\"It took me %d:%02d:%02d to get here with RC %d\n\",$DIFFH,$DIFFM,$DIFFS,$1)}"|tee -a $TMP.mail|logger -s -puser.info -t$BASE.$$
-
-        echo $TMP.mail
-        wc -l  $TMP.mail
-
         if [ $1 -ne 99 ] ; then
             ssh $TARGET sendmail -t < $TMP.mail
         fi
         rm -rf $TMP.* 
         exit $1
+    else 
+        cat $TMP.mail        
     fi
 }
 #############################################################
