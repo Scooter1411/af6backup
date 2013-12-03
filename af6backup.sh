@@ -30,13 +30,6 @@ LEGACYLIST=$TODIR/af5backup.names
 NAMESDIR=$TODIR/af6backup.names
 #############################################################
 MAILTO="alexander.franz.1411@gmail.com"
-#
-# We only have a sendmail on the qnap, prepare the mail the hard way
-#
-echo "Subject: Backup $HOST"  >  $TMP.mail
-echo "From: $MAILTO"          >> $TMP.mail
-echo "To: $MAILTO"            >> $TMP.mail
-echo ""                       >> $TMP.mail
 #############################################################
 # serverBackup, awk-Teil
 #############################################################
@@ -345,8 +338,12 @@ abspath () {
 af6_backup () {
 
     if [ -d "$1" ] ; then
+        echo "Backup directory $1:" | tee -a $TMP.mail |logger -s -puser.info -t$BASE.$$
+        echo | tee -a $TMP.mail |logger -s -puser.info -t$BASE.$$
         find $1 -type f $LAZY -exec $MYSELF --nomail backup {} \;| tee -a $TMP.mail |logger -s -puser.info -t$BASE.$$
     elif [ -z "$1" ] ; then 
+        DIR=`pwd`
+        echo "Backup directory $DIR:\n" | tee -a $TMP.mail |logger -s -puser.info -t$BASE.$$
         find . -type f $LAZY -exec $MYSELF --nomail backup {} \;| tee -a $TMP.mail |logger -s -puser.info -t$BASE.$$
     elif [ -f "$1" ] ; then
         af6_mutex_in
@@ -357,14 +354,14 @@ af6_backup () {
         MDATE=`echo $LS|cut -d' ' -f6`
         ABS=`abspath $1`
         #ssh $TARGET af6Server backup $MD5 $SIZE $MDATE $HOST $ABS 
-        echo "serverBackup $MD5 $SIZE $MDATE $HOST \"$ABS\""|logger -s -puser.info -t$BASE.$$
+        echo "serverBackup $MD5 $SIZE $MDATE $HOST \"$ABS\""| tee -a $TMP.mail |logger -s -puser.info -t$BASE.$$
         #echo "DOBACKUP" > $TMP.serverOut
         ./af6backup.sh serverBackup $MD5 $SIZE $MDATE $HOST "$ABS" | tee -a $TMP.mail |logger -s -puser.info -t$BASE.$$
 
         cat $TMP.mail
         RETCODE=`tail -1 < $TMP.mail`   
         if [ "$RETCODE" == "DOBACKUP" ] ; then
-            echo "We really have to backup this file $ABS."|tee -a $TMP.mail |logger -s -puser.info -t$BASE.$$
+            echo "We really have to backup this file $ABS.\n"|tee -a $TMP.mail |logger -s -puser.info -t$BASE.$$
             mkdir -p $TMP.dir
             bzip2 --best --stdout --force $1 > $TMP.dir/$MD5.bz2
             BZSIZE=`ls -l $TMP.dir/$MD5.bz2|cut -d' ' -f5`  
@@ -378,9 +375,9 @@ af6_backup () {
                 cp $1 $DIR/$MD5
             fi
         elif [ "$RETCODE" == "ALREADYDONE" ] ; then
-            echo "This file $ABS was already backed up."|tee -a $TMP.mail |logger -s -puser.info -t$BASE.$$
+            echo "This file $ABS was already backed up.\n"|tee -a $TMP.mail |logger -s -puser.info -t$BASE.$$
         else
-            echo "Strange retcode $RETCODE"|tee -a $TMP.mail |logger -s -puser.info -t$BASE.$$
+            echo "Strange retcode $RETCODE\n"|tee -a $TMP.mail |logger -s -puser.info -t$BASE.$$
         fi
         cat $TMP.mail
         af6_mutex_out 
@@ -398,7 +395,15 @@ af6_end () {
         DIFFS=`expr $DIFF % 60`
         echo|awk "{printf(\"It took me %d:%02d:%02d to get here with RC %d\n\",$DIFFH,$DIFFM,$DIFFS,$1)}"|tee -a $TMP.mail|logger -s -puser.info -t$BASE.$$
         if [ $1 -ne 99 ] ; then
-            ssh $TARGET sendmail -t < $TMP.mail
+            #
+            # We only have a sendmail on the qnap, prepare the mail the hard way
+            #
+            echo "Subject: Backup $HOST"  >  $TMP.mail2
+            echo "From: $MAILTO"          >> $TMP.mail2
+            echo "To: $MAILTO"            >> $TMP.mail2
+            echo ""                       >> $TMP.mail2
+            cat $TMP.mail                 >> $TMP.mail2
+            ssh $TARGET sendmail -t        < $TMP.mail2
         fi
         rm -rf $TMP.* 
         exit $1
