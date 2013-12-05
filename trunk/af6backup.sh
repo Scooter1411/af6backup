@@ -15,7 +15,7 @@ SDIR=`dirname $0`
 if [ "$SDIR" = "." ] ; then
     SDIR=`pwd`
 fi
-MYSELF=$SDIR/$0
+MYSELF=$SDIR/$BASE.sh
 TMP=/tmp/$BASE.$$
 #logger -s -puser.info -t$BASE.$$ started
 HOST=`hostname`
@@ -337,17 +337,18 @@ abspath () {
 ############################################################
 af6_backup () {
 
+    #echo "** backup $*" | tee -a $TMP.mail |logger -s -puser.info -t$BASE.$$
     if [ -d "$1" ] ; then
         echo "Backup directory $1:" | tee -a $TMP.mail |logger -s -puser.info -t$BASE.$$
-        echo | tee -a $TMP.mail |logger -s -puser.info -t$BASE.$$
-        find $1 -type f $LAZY -exec $MYSELF --nomail backup {} \;| tee -a $TMP.mail |logger -s -puser.info -t$BASE.$$
+        find $1 -type f $LAZY -exec $MYSELF --nomail backup {} \; >> $TMP.mail
     elif [ -z "$1" ] ; then 
         DIR=`pwd`
-        echo "Backup directory $DIR:\n" | tee -a $TMP.mail |logger -s -puser.info -t$BASE.$$
+        echo "Backup directory $DIR:" | tee -a $TMP.mail |logger -s -puser.info -t$BASE.$$
+        echo | tee -a $TMP.mail |logger -s -puser.info -t$BASE.$$
         find . -type f $LAZY -exec $MYSELF --nomail backup {} \;| tee -a $TMP.mail |logger -s -puser.info -t$BASE.$$
     elif [ -f "$1" ] ; then
         af6_mutex_in
-        set -x
+        #set -x
         MD5=`md5sum $1|cut -d' ' -f1`
         LS=`ls -l --time-style="+%Y%m%d%H%M%S" $1`
         SIZE=`echo $LS|cut -d' ' -f5`
@@ -358,10 +359,10 @@ af6_backup () {
         #echo "DOBACKUP" > $TMP.serverOut
         ./af6backup.sh serverBackup $MD5 $SIZE $MDATE $HOST "$ABS" | tee -a $TMP.mail |logger -s -puser.info -t$BASE.$$
 
-        cat $TMP.mail
+        #cat $TMP.mail
         RETCODE=`tail -1 < $TMP.mail`   
         if [ "$RETCODE" == "DOBACKUP" ] ; then
-            echo "We really have to backup this file $ABS.\n"|tee -a $TMP.mail |logger -s -puser.info -t$BASE.$$
+            echo "We really have to backup this file $ABS."|tee -a $TMP.mail |logger -s -puser.info -t$BASE.$$
             mkdir -p $TMP.dir
             bzip2 --best --stdout --force $1 > $TMP.dir/$MD5.bz2
             BZSIZE=`ls -l $TMP.dir/$MD5.bz2|cut -d' ' -f5`  
@@ -375,18 +376,18 @@ af6_backup () {
                 cp $1 $DIR/$MD5
             fi
         elif [ "$RETCODE" == "ALREADYDONE" ] ; then
-            echo "This file $ABS was already backed up.\n"|tee -a $TMP.mail |logger -s -puser.info -t$BASE.$$
+            echo "This file $ABS was already backed up."|tee -a $TMP.mail |logger -s -puser.info -t$BASE.$$
         else
-            echo "Strange retcode $RETCODE\n"|tee -a $TMP.mail |logger -s -puser.info -t$BASE.$$
+            echo "Strange retcode $RETCODE"|tee -a $TMP.mail |logger -s -puser.info -t$BASE.$$
         fi
-        cat $TMP.mail
+        #cat $TMP.mail
         af6_mutex_out 
     fi
     af6_end 0
 }
 ############################################################
 af6_end () {
-    set -x
+    #set -x
     if [ ! "$NOMAIL" = "true" ] ; then
         STOP=`date +%s`
         DIFF=`expr $STOP - $START`
@@ -623,4 +624,3 @@ usage:
 EOF
     af6_end 1
 fi
-af6_end 0
