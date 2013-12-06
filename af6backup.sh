@@ -339,30 +339,28 @@ af6_backup () {
 
     #echo "** backup $*" | tee -a $TMP.mail |logger -s -puser.info -t$BASE.$$
     if [ -d "$1" ] ; then
-        echo "Backup directory $1:" | tee -a $TMP.mail |logger -s -puser.info -t$BASE.$$
+        echo "Backup directory $1:"                  | tee -a $TMP.mail |logger -s -puser.info -t$BASE.$$
         find $1 -type f $LAZY -exec $MYSELF --nomail backup {} \; >> $TMP.mail
     elif [ -z "$1" ] ; then 
         DIR=`pwd`
-        echo "Backup directory $DIR:" | tee -a $TMP.mail |logger -s -puser.info -t$BASE.$$
-        echo | tee -a $TMP.mail |logger -s -puser.info -t$BASE.$$
-        find . -type f $LAZY -exec $MYSELF --nomail backup {} \;| tee -a $TMP.mail |logger -s -puser.info -t$BASE.$$
+        echo "Backup directory $DIR:"                | tee -a $TMP.mail |logger -s -puser.info -t$BASE.$$
+        find . -type f $LAZY -exec $MYSELF --nomail backup {} \; >> $TMP.mail
     elif [ -f "$1" ] ; then
         af6_mutex_in
-        #set -x
+
         MD5=`md5sum $1|cut -d' ' -f1`
         LS=`ls -l --time-style="+%Y%m%d%H%M%S" $1`
         SIZE=`echo $LS|cut -d' ' -f5`
         MDATE=`echo $LS|cut -d' ' -f6`
         ABS=`abspath $1`
+
         #ssh $TARGET af6Server backup $MD5 $SIZE $MDATE $HOST $ABS 
         echo "serverBackup $MD5 $SIZE $MDATE $HOST \"$ABS\""| tee -a $TMP.mail |logger -s -puser.info -t$BASE.$$
         #echo "DOBACKUP" > $TMP.serverOut
         ./af6backup.sh serverBackup $MD5 $SIZE $MDATE $HOST "$ABS" | tee -a $TMP.mail |logger -s -puser.info -t$BASE.$$
 
-        #cat $TMP.mail
         RETCODE=`tail -1 < $TMP.mail`   
         if [ "$RETCODE" == "DOBACKUP" ] ; then
-            echo "We really have to backup this file $ABS."|tee -a $TMP.mail |logger -s -puser.info -t$BASE.$$
             mkdir -p $TMP.dir
             bzip2 --best --stdout --force $1 > $TMP.dir/$MD5.bz2
             BZSIZE=`ls -l $TMP.dir/$MD5.bz2|cut -d' ' -f5`  
@@ -371,8 +369,10 @@ af6_backup () {
             DREI=`echo $MD5|cut -c3-3`
             DIR=$TODIR/$EINS/$ZWEI/$DREI
             if [ $SIZE -gt $BZSIZE ] ; then
+                echo "BZIPPED file $ABS."|tee -a $TMP.mail |logger -s -puser.info -t$BASE.$$
                 cp $TMP.dir/$MD5.bz2 $DIR
             else
+                echo "COPIED  file $ABS."|tee -a $TMP.mail |logger -s -puser.info -t$BASE.$$
                 cp $1 $DIR/$MD5
             fi
         elif [ "$RETCODE" == "ALREADYDONE" ] ; then
@@ -380,21 +380,29 @@ af6_backup () {
         else
             echo "Strange retcode $RETCODE"|tee -a $TMP.mail |logger -s -puser.info -t$BASE.$$
         fi
-        #cat $TMP.mail
         af6_mutex_out 
     fi
     af6_end 0
 }
 ############################################################
 af6_end () {
-    #set -x
     if [ ! "$NOMAIL" = "true" ] ; then
+        echo '-------------------------------------------------------------'|tee -a $TMP.mail|logger -s -puser.info -t$BASE.$$
         STOP=`date +%s`
         DIFF=`expr $STOP - $START`
         DIFFH=`expr $DIFF / 3600`
         DIFFM=`expr \( $DIFF - \( $DIFFH \* 3600 \) \) / 60`
         DIFFS=`expr $DIFF % 60`
         echo|awk "{printf(\"It took me %d:%02d:%02d to get here with RC %d\n\",$DIFFH,$DIFFM,$DIFFS,$1)}"|tee -a $TMP.mail|logger -s -puser.info -t$BASE.$$
+
+        NUMDO=`grep DOBACKUP < $TMP.mail|wc -l`
+        NUMDONE=`grep ALREADYDONE < $TMP.mail|wc -l`
+        echo|awk "{printf(\"I backed up %d files, %d where already done\n\",$NUMDO,$NUMDONE)}"|tee -a $TMP.mail|logger -s -puser.info -t$BASE.$$
+
+        NUMBZ=`grep BZIPPED < $TMP.mail|wc -l`
+        NUMCP=`grep COPIED  < $TMP.mail|wc -l`
+        echo|awk "{printf(\"%d files bzipped, %d files copied\n\",$NUMBZ,$NUMCP)}"|tee -a $TMP.mail|logger -s -puser.info -t$BASE.$$
+
         if [ $1 -ne 99 ] ; then
             #
             # We only have a sendmail on the qnap, prepare the mail the hard way
@@ -602,7 +610,6 @@ if [ "$1" = "--nomail" ] ; then
     shift
 fi
 
-#set -x
 if [ "$1" = "backup" ] ; then
     af6_backup $2
 elif [ "$1" = "fromcron" ] ; then
