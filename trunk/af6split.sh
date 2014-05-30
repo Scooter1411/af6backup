@@ -90,7 +90,7 @@ while read LINE
     SIZE=`echo $LINE|cut -f2 -d';'`
     ABS=`echo $LINE|sed -e's+[^;]*;[^;]*;[^;]*;++'`
     
-    echo "$MD5;$SIZE;$MDATE;$HOST;\"$ABS\"" >> $MYPATH.af6
+    echo "$MD5;$SIZE;$MDATE;$HOST;\"$ABS\"" |tee -a $MYPATH.af6
     sort < $MYPATH.af6 > $TMP.af6
     uniq < $TMP.af6 > $MYPATH.af6
 
