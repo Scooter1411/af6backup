@@ -53,45 +53,12 @@ END{
     }
 }
 EOF
-cat <<EOF > $TMP.sort2n.awk
-{
-    source[\$0] = \$2
-}
-END{
-    n = asort(source,dest,"@val_num_desc")
-    print( n );
-    for (i = 1; i <= n; i++) {
-        print([i])
-    }
-}
-EOF
-cat <<EOF > $TMP.sort3.awk
-{
-    source[\$3] = \$0
-}
-END{
-    n = asorti(source, dest)
-    for (i = 1; i <= n; i++) {
-        print(source[dest[i]])
-    }
-}
-EOF
-cat <<EOF > $TMP.sort5.awk
-{
-    source[\$3] = \$0
-}
-END{
-    n = asorti(source, dest)
-    for (i = 1; i <= n; i++) {
-        print(source[dest[i]])
-    }
-}
-EOF
 #############################################################
 bzip2 --stdout $MASTERLIST > $OLDDIR/af6backup.$DATE.master.bz2
 
 find $TODIR -type f -name '*.af6' > $TMP.filelist
 
+cat /dev/null > $MASTERLIST
 cat $TMP.filelist| while read FILE
   do
     cat $FILE >> $MASTERLIST
@@ -107,19 +74,26 @@ awk -F';' '{printf("%s;%s;%s;%s;%s\n",$3,$1,$2,$4,$5)}' <$MASTERLIST |sort    > 
 awk -F';' '{printf("%s;%s;%s;%s;%s\n",$5,$1,$2,$3,$4)}' <$MASTERLIST |sort    > $TODIR/af6backup.byName
 
 cut -d';' -f4 < $MASTERLIST|sort|uniq > $TMP.hostlist
+rm $TODIR/af6backup.byName.*
 cat $TMP.hostlist|while read THISHOST
   do
     grep ";$THISHOST\$" < $TODIR/af6backup.byName > $TODIR/af6backup.byName.$THISHOST
   done
 
-#cat $TMP.retention.awk
+rm $TODIR/af6backup.retention.*
 awk -F';' -f $TMP.retention.awk < $MASTERLIST > $TODIR/af6backup.retention
 cut -d';' -f1 < $TODIR/af6backup.retention|sort|uniq > $TMP.retentionCounts
 cat $TMP.retentionCounts|while read THISCOUNT
   do
     grep "^$THISCOUNT;" < $TODIR/af6backup.retention > $TODIR/af6backup.retention.$THISCOUNT
+    cut -d';' -f2 < $TODIR/af6backup.retention.$THISCOUNT|sort|uniq > $TMP.retentionNames
+    echo '*****************************************' >> $TODIR/af6backup.retention.$THISCOUNT
+    cat $TMP.retentionNames|while read THISNAME
+      do
+        grep ";$THISNAME" < $MASTERLIST >> $TODIR/af6backup.retention.$THISCOUNT
+        echo '-----------------------------------------' >> $TODIR/af6backup.retention.$THISCOUNT
+      done
   done
-
 
 wc -l $TODIR/af6backup.*
 exit 0
