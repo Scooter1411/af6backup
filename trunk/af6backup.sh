@@ -127,12 +127,12 @@ af6_end () {
             #
             # We only have a sendmail on the qnap, prepare the mail the hard way
             #
-            echo "Subject: Backup $HOST"  >  $TMP.mail2
-            echo "From: $MAILTO"          >> $TMP.mail2
-            echo "To: $MAILTO"            >> $TMP.mail2
-            echo ""                       >> $TMP.mail2
-            cat $TMP.mail                 >> $TMP.mail2
-            ssh $TARGET sendmail -t        < $TMP.mail2
+            echo "Subject: AF6Backup $HOST"  >  $TMP.mail2
+            echo "From: $MAILTO"             >> $TMP.mail2
+            echo "To: $MAILTO"               >> $TMP.mail2
+            echo ""                          >> $TMP.mail2
+            cat $TMP.mail                    >> $TMP.mail2
+            ssh $TARGET sendmail -t           < $TMP.mail2
         fi
         rm -rf $TMP.* 
         exit $1

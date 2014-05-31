@@ -28,8 +28,10 @@ TODIR=$MOUNTDIR/af5backup.dir
 OLDDIR=$TODIR/old
 LEGACYLIST=$TODIR/af5backup.names
 MASTERLIST=$TODIR/af6backup.master
+MAILTO="alexander.franz.1411@gmail.com"
+MAX=4
 #############################################################
-# serverBackup, awk-Teil
+# retention, awk-Teil
 #############################################################
 cat <<EOF > $TMP.retention.awk
 BEGIN{
@@ -47,12 +49,14 @@ BEGIN{
 }
 END{
     for( key in countMap ) {
-         if( countMap[key] > 4 ){
+         if( countMap[key] > $MAX ){
              printf("%d;%s\n",countMap[key],key) 
          }
     }
 }
 EOF
+#############################################################
+# main script
 #############################################################
 bzip2 --stdout $MASTERLIST > $OLDDIR/af6backup.$DATE.master.bz2
 
@@ -74,26 +78,53 @@ awk -F';' '{printf("%s;%s;%s;%s;%s\n",$3,$1,$2,$4,$5)}' <$MASTERLIST |sort    > 
 awk -F';' '{printf("%s;%s;%s;%s;%s\n",$5,$1,$2,$3,$4)}' <$MASTERLIST |sort    > $TODIR/af6backup.byName
 
 cut -d';' -f4 < $MASTERLIST|sort|uniq > $TMP.hostlist
-rm $TODIR/af6backup.byName.*
+rm $TODIR/af6backup.byName.* 2>/dev/null
 cat $TMP.hostlist|while read THISHOST
   do
     grep ";$THISHOST\$" < $TODIR/af6backup.byName > $TODIR/af6backup.byName.$THISHOST
   done
 
-rm $TODIR/af6backup.retention.*
-awk -F';' -f $TMP.retention.awk < $MASTERLIST > $TODIR/af6backup.retention
+rm $TODIR/af6backup.retention.* 2>/dev/null
+awk -F';' -f $TMP.retention.awk < $MASTERLIST | sort -n > $TODIR/af6backup.retention
 cut -d';' -f1 < $TODIR/af6backup.retention|sort|uniq > $TMP.retentionCounts
+cat $TMP.retentionCounts
 cat $TMP.retentionCounts|while read THISCOUNT
   do
     grep "^$THISCOUNT;" < $TODIR/af6backup.retention > $TODIR/af6backup.retention.$THISCOUNT
     cut -d';' -f2 < $TODIR/af6backup.retention.$THISCOUNT|sort|uniq > $TMP.retentionNames
+    cat $TMP.retentionNames
     echo '*****************************************' >> $TODIR/af6backup.retention.$THISCOUNT
     cat $TMP.retentionNames|while read THISNAME
       do
-        grep ";$THISNAME" < $MASTERLIST >> $TODIR/af6backup.retention.$THISCOUNT
+        grep ";$THISNAME" < $TODIR/af6backup.byTime >> $TODIR/af6backup.retention.$THISCOUNT
         echo '-----------------------------------------' >> $TODIR/af6backup.retention.$THISCOUNT
       done
   done
+#############################################################
+# stats & mail
+#############################################################
+wc -l $TODIR/af6backup.* |tee -a $TMP.mail|logger -s -puser.info -t$BASE.$$
 
-wc -l $TODIR/af6backup.*
+
+echo '-------------------------------------------------------------'|\
+     tee -a $TMP.mail|logger -s -puser.info -t$BASE.$$
+STOP=`date +%s`
+DIFF=`expr $STOP - $START`
+DIFFH=`expr $DIFF / 3600`
+DIFFM=`expr \( $DIFF - \( $DIFFH \* 3600 \) \) / 60`
+DIFFS=`expr $DIFF % 60`
+echo|awk "{printf(\"It took me %d:%02d:%02d to get here.\n\",$DIFFH,$DIFFM,$DIFFS)}"|\
+     tee -a $TMP.mail|logger -s -puser.info -t$BASE.$$
+echo '-------------------------------------------------------------'|\
+     tee -a $TMP.mail|logger -s -puser.info -t$BASE.$$
+df | grep _DATA |tee -a $TMP.mail|logger -s -puser.info -t$BASE.$$
+
+echo "Subject: AF6Collect $HOST" >  $TMP.mail2
+echo "From: $MAILTO"             >> $TMP.mail2
+echo "To: $MAILTO"               >> $TMP.mail2
+echo ""                          >> $TMP.mail2
+cat $TMP.mail                    >> $TMP.mail2
+sendmail -t                      <  $TMP.mail2
+
+rm -rf $TMP.* 
 exit 0
