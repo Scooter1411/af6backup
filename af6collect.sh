@@ -47,7 +47,7 @@ BEGIN{
 }
 END{
     for( key in countMap ) {
-         if( countMap[key] > 1 ){
+         if( countMap[key] > 4 ){
              printf("%d;%s\n",countMap[key],key) 
          }
     }
