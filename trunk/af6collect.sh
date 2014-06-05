@@ -17,7 +17,6 @@ if [ "$SDIR" = "." ] ; then
     SDIR=`pwd`
 fi
 MYSELF=$SDIR/$BASE.sh
-TMP=/tmp/$BASE.$$
 #logger -s -puser.info -t$BASE.$$ started
 HOST=`hostname`
 #############################################################
@@ -26,6 +25,9 @@ HOST=`hostname`
 MOUNTDIR=/share/HDA_DATA/Public
 TODIR=$MOUNTDIR/af5backup.dir
 OLDDIR=$TODIR/old
+mkdir -p $OLDDIR 2>/dev/null
+mkdir -p $TODIR/tmp 2>/dev/null
+TMP=$TODIR/tmp/$BASE.$$
 LEGACYLIST=$TODIR/af5backup.names
 MASTERLIST=$TODIR/af6backup.master
 MAILTO="alexander.franz.1411@gmail.com"
@@ -61,6 +63,7 @@ EOF
 bzip2 --stdout $MASTERLIST > $OLDDIR/af6backup.$DATE.master.bz2
 
 find $TODIR -type f -name '*.af6' > $TMP.filelist
+wc -l  $TMP.filelist
 
 cat /dev/null > $MASTERLIST
 cat $TMP.filelist| while read FILE
@@ -69,6 +72,7 @@ cat $TMP.filelist| while read FILE
   done
 sort < $MASTERLIST > $TMP.master
 uniq < $TMP.master > $MASTERLIST
+wc -l $TMP.master $MASTERLIST
 
 #sort -t';' -k2 < $MASTERLIST > $TODIR/af6backup.bySize
 awk -F';' '{printf("%s;%s;%s;%s;%s\n",$2,$1,$3,$4,$5)}' <$MASTERLIST |sort -n > $TODIR/af6backup.bySize
@@ -126,5 +130,5 @@ echo ""                          >> $TMP.mail2
 cat $TMP.mail                    >> $TMP.mail2
 sendmail -t                      <  $TMP.mail2
 
-rm -rf $TMP.* 
+#rm -rf $TMP.* 
 exit 0
