@@ -17,6 +17,7 @@ if [ "$SDIR" = "." ] ; then
     SDIR=`pwd`
 fi
 MYSELF=$SDIR/$BASE.sh
+#logger -s -puser.info -t$BASE.$$ started
 HOST=`hostname`
 #############################################################
 # main configuration
@@ -59,38 +60,13 @@ EOF
 #############################################################
 # main script
 #############################################################
-echo 'af6collect started' |tee -a $TMP.mail|logger -s -puser.info -t$BASE.$$
-date                      |tee -a $TMP.mail|logger -s -puser.info -t$BASE.$$
-
-bzip2 --stdout $MASTERLIST > $OLDDIR/af6backup.$DATE.master.bz2
-
-find $TODIR -type f -name '*.af6' > $TMP.filelist
-
-cat /dev/null > $MASTERLIST
-cat $TMP.filelist| while read FILE
-  do
-    cat $FILE >> $MASTERLIST
-  done
-sort < $MASTERLIST > $TMP.master
-uniq < $TMP.master > $MASTERLIST
-
-awk -F';' '{printf("%s;%s;%s;%s;%s\n",$2,$1,$3,$4,$5)}' <$MASTERLIST |sort -n > $TODIR/af6backup.bySize
-awk -F';' '{printf("%s;%s;%s;%s;%s\n",$3,$1,$2,$4,$5)}' <$MASTERLIST |sort    > $TODIR/af6backup.byTime
-awk -F';' '{printf("%s;%s;%s;%s;%s\n",$5,$1,$2,$3,$4)}' <$MASTERLIST |sort    > $TODIR/af6backup.byName
-
-cut -d';' -f4 < $MASTERLIST|sort|uniq > $TMP.hostlist
-rm $TODIR/af6backup.byName.* 2>/dev/null
-cat $TMP.hostlist|while read THISHOST
-  do
-    grep ";$THISHOST\$" < $TODIR/af6backup.byName > $TODIR/af6backup.byName.$THISHOST
-  done
-
 rm $TODIR/af6backup.retention.* 2>/dev/null
 awk -F';' -f $TMP.retention.awk < $MASTERLIST | sort -n > $TODIR/af6backup.retention
 #############################################################
 # stats & mail
 #############################################################
 wc -l $TODIR/af6backup.* |tee -a $TMP.mail|logger -s -puser.info -t$BASE.$$
+
 
 echo '-------------------------------------------------------------'|\
      tee -a $TMP.mail|logger -s -puser.info -t$BASE.$$
