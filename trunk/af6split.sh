@@ -66,17 +66,16 @@ if [ ! -d "$TODIR/f/f/f" ] ; then
 fi
 
 find $TODIR -type f -name '*.check' | sed -e's+^.*/++' -e's+[.].*++' > $TODIR/af5check
+cat $TODIR/af5check
 
-while read LINE
+while read MD5
   do
-    MD5=`echo $LINE|cut -c1-32`
-    grep $MD5 $TODIR/af5check 
-    if [ "$?" == "0" ] ; then
-
-        MD51=`echo $MD5|cut -c1-1`
-        MD52=`echo $MD5|cut -c2-2`
-        MD53=`echo $MD5|cut -c3-3`
+    MD51=`echo $MD5|cut -c1-1`
+    MD52=`echo $MD5|cut -c2-2`
+    MD53=`echo $MD5|cut -c3-3`
         
+    grep $MD5 $LEGACYLIST | while read LINE
+      do
         MYPATH=$TODIR/$MD51/$MD52/$MD53/$MD5
         rm $MYPATH.check 2>/dev/null
         rm $MYPATH.bz2.check 2>/dev/null
@@ -101,7 +100,6 @@ while read LINE
         echo "$MD5;$SIZE;$MDATE;$HOST;\"$ABS\"" |tee -a $MYPATH.af6
         sort < $MYPATH.af6 > $TMP.af6
         uniq < $TMP.af6 > $MYPATH.af6
-    fi
-  done < $LEGACYLIST 
-
+      done  
+  done < $TODIR/af5check
 exit 0
