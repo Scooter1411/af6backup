@@ -65,35 +65,43 @@ if [ ! -d "$TODIR/f/f/f" ] ; then
       done
 fi
 
-#wc -l $LEGACYLIST 
+find $TODIR -type f -name '*.check' | sed -e's+^.*/++' -e's+[.].*++' > $TODIR/af5check
 
 while read LINE
   do
     MD5=`echo $LINE|cut -c1-32`
+    grep $MD5 $TODIR/af5check 
+    if [ "$?" == "0" ] ; then
 
-    MD51=`echo $MD5|cut -c1-1`
-    MD52=`echo $MD5|cut -c2-2`
-    MD53=`echo $MD5|cut -c3-3`
-
-    MYPATH=$TODIR/$MD51/$MD52/$MD53/$MD5
-    rm $MYPATH.check 2>/dev/null
-    rm $MYPATH.bz2.check 2>/dev/null
-
-    MDATE=`mdate $MYPATH`
-    if [ -z "$MDATE" ] ; then
-        MDATE=`mdate $MYPATH.bz2`
-    fi 
-    if [ -z "$MDATE" ] ; then
-        MDATE=20131111111111
-    fi 
-
-    SIZE=`echo $LINE|cut -f2 -d';'`
-    ABS=`echo $LINE|sed -e's+[^;]*;[^;]*;[^;]*;++'`
-    
-    echo "$MD5;$SIZE;$MDATE;$HOST;\"$ABS\"" |tee -a $MYPATH.af6
-    sort < $MYPATH.af6 > $TMP.af6
-    uniq < $TMP.af6 > $MYPATH.af6
-
+        MD51=`echo $MD5|cut -c1-1`
+        MD52=`echo $MD5|cut -c2-2`
+        MD53=`echo $MD5|cut -c3-3`
+        
+        MYPATH=$TODIR/$MD51/$MD52/$MD53/$MD5
+        rm $MYPATH.check 2>/dev/null
+        rm $MYPATH.bz2.check 2>/dev/null
+        
+        MDATE=`mdate $MYPATH`
+        if [ -z "$MDATE" ] ; then
+            MDATE=`mdate $MYPATH.bz2`
+        fi 
+        if [ -z "$MDATE" ] ; then
+            MDATE=`mdate $MYPATH.check`
+        fi 
+        if [ -z "$MDATE" ] ; then
+            MDATE=`mdate $MYPATH.bz2.check`
+        fi 
+        if [ -z "$MDATE" ] ; then
+            MDATE=20131111111111
+        fi 
+        
+        SIZE=`echo $LINE|cut -f2 -d';'`
+        ABS=`echo $LINE|sed -e's+[^;]*;[^;]*;[^;]*;++'`
+        
+        echo "$MD5;$SIZE;$MDATE;$HOST;\"$ABS\"" |tee -a $MYPATH.af6
+        sort < $MYPATH.af6 > $TMP.af6
+        uniq < $TMP.af6 > $MYPATH.af6
+    fi
   done < $LEGACYLIST 
 
 exit 0
