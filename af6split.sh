@@ -73,8 +73,9 @@ while read MD5
     MD51=`echo $MD5|cut -c1-1`
     MD52=`echo $MD5|cut -c2-2`
     MD53=`echo $MD5|cut -c3-3`
+    MD5FILE=$TODIR/list/`echo $MD5|cut -c1-3`
         
-    grep $MD5 $LEGACYLIST | while read LINE
+    grep $MD5 $MD5FILE | while read LINE
       do
         MYPATH=$TODIR/$MD51/$MD52/$MD53/$MD5
         rm $MYPATH.check 2>/dev/null
