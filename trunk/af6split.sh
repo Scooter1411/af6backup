@@ -31,7 +31,8 @@ LEGACYLIST=$TODIR/af5backup.names
 ############################################################
 
 ############################################################
-# canonical path name
+# ls on busybox does not support --time-style
+# so we need this funny workaround
 ############################################################
 mdate () {
     if [ -f $1 ] ; then 

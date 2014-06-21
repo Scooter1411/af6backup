@@ -42,17 +42,48 @@ abspath () {
    esac; 
 }
 ############################################################
+# ls on busybox does not support --time-style
+# so we need this funny workaround
+############################################################
+mdate () {
+    if [ -f $1 ] ; then 
+        _LS=`ls -l --time-style="+%Y%m%d%H%M%S" $1 2>/dev/null`
+        _MDATE=`echo $_LS|cut -d' ' -f6`
+        if [ -z "$_MDATE" ] ; then
+            _LS=`ls -le $1 2>/dev/null`
+            _Y=`echo $_LS|cut -d' ' -f10`
+            _MO=`echo $_LS|cut -d' ' -f7|sed -e's+Jan+01+' -e's+Feb+02+' -e's+Mar+03+' -e's+Apr+04+' -e's+Ma.+05+' -e's+Jun+06+' -e's+Jul+07+' -e's+Aug+08+' -e's+Sep+09+' -e's+O.t+10+' -e's+Nov+11+' -e's+De.+12+'`
+            _D=`echo $_LS|cut -d' ' -f8|awk '{printf("%02d",\$0)}'`
+            _T=`echo $_LS|cut -d' ' -f9|sed -e's+:++g'`
+            _MDATE=`echo $_Y$_MO$_D$_T`
+        fi 
+        echo $_MDATE
+    fi
+}
+############################################################
 # do the backup (client side)
 ############################################################
 af6_backup () {
 
     if [ -d "$1" ] ; then
         echo "Backup directory $1:"                  | tee -a $TMP/mail |logger -s -puser.info -t$BASE.$$
-        find $1 -type f $LAZY -exec $MYSELF --nomail backup {} \; >> $TMP/mail
+        find $1 -type f $LAZY | while read FILE 
+          do
+            af6_backup $FILE >> $TMP/mail
+          done
     elif [ -z "$1" ] ; then 
         DIR=`pwd`
         echo "Backup directory $DIR:"                | tee -a $TMP/mail |logger -s -puser.info -t$BASE.$$
-        find . -type f $LAZY -exec $MYSELF --nomail backup {} \; >> $TMP/mail
+        find . -type f $LAZY > $TMP/filelist
+        wc -l  $TMP/filelist
+        echo 'vvv'
+        cat $TMP/filelist | while read FILE 
+          do
+            echo "-1- " $FILE
+            af6_backup $FILE 
+            echo "-2- " $FILE
+          done
+        echo '^^^'
     elif [ -f "$1" ] ; then
         MD5=`md5sum $1|cut -d' ' -f1`
 
@@ -60,17 +91,17 @@ af6_backup () {
         MD52=`echo $MD5|cut -c2,2`
         MD53=`echo $MD5|cut -c3,3`
 
-        LS=`ls -l --time-style="+%Y%m%d%H%M%S" $1`
-        SIZE=`echo $LS|cut -d' ' -f5`
-        MDATE=`echo $LS|cut -d' ' -f6`
-        ABS=`abspath $1`
-
         MYPATH=$TODIR/$MD51/$MD52/$MD53/$MD5
         LOCKDIR=$MYPATH.lock
         COMMAND="mkdir $LOCKDIR;echo \$?"
         RES=`ssh $TARGET $COMMAND`
         if [ "$RES" = "0" ] ; then
-            scp $TARGET:$MYPATH.af6_0 $TMP 2>/dev/null
+            LS=`ls -l --time-style="+%Y%m%d%H%M%S" $1`
+            SIZE=`echo $LS|cut -d' ' -f5`
+            MDATE=`mdate $1`
+            ABS=`abspath $1`
+
+            scp $TARGET:$MYPATH.af6 $TMP/$MD5.af6_0 2>/dev/null
 
             echo "$MD5;$SIZE;$MDATE;$HOST;\"$ABS\"" >> $TMP/$MD5.af6_0
             sort < $TMP/$MD5.af6_0 > $TMP/$MD5.af6_1
@@ -101,7 +132,6 @@ af6_backup () {
             ssh $TARGET "rmdir $LOCKDIR"
         fi
     fi
-    af6_end 0
 }
 ############################################################
 # stats & send mail
@@ -143,6 +173,7 @@ af6_end () {
         exit $1
     else 
         cat $TMP/mail        
+        #rm -rf $TMP
     fi
 }
 #############################################################
@@ -212,6 +243,7 @@ fi
 
 if [ "$1" = "backup" ] ; then
     af6_backup $2
+    af6_end 0 
 elif [ "$1" = "fromcron" ] ; then
     af6_fromcron
 else
