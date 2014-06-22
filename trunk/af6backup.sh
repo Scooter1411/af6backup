@@ -67,25 +67,18 @@ af6_backup () {
 
     if [ -d "$1" ] ; then
         echo "Backup directory $1:"                  | tee -a $TMP/mail |logger -s -puser.info -t$BASE.$$
-        find $1 -type f $LAZY | while read FILE 
-          do
-            af6_backup $FILE >> $TMP/mail
-          done
+        find $1 -type f $LAZY > $TMP/file.lst
     elif [ -z "$1" ] ; then 
         DIR=`pwd`
         echo "Backup directory $DIR:"                | tee -a $TMP/mail |logger -s -puser.info -t$BASE.$$
-        find . -type f $LAZY > $TMP/filelist
-        wc -l  $TMP/filelist
-        echo 'vvv'
-        cat $TMP/filelist | while read FILE 
-          do
-            echo "-1- " $FILE
-            af6_backup $FILE 
-            echo "-2- " $FILE
-          done
-        echo '^^^'
+        find $DIR -type f $LAZY > $TMP/file.lst
     elif [ -f "$1" ] ; then
-        MD5=`md5sum $1|cut -d' ' -f1`
+       echo $1 > $TMP/file.lst
+    fi
+
+    while read THISFILE
+      do
+        MD5=`md5sum $THISFILE|cut -d' ' -f1`
 
         MD51=`echo $MD5|cut -c1,1`
         MD52=`echo $MD5|cut -c2,2`
@@ -94,44 +87,45 @@ af6_backup () {
         MYPATH=$TODIR/$MD51/$MD52/$MD53/$MD5
         LOCKDIR=$MYPATH.lock
         COMMAND="mkdir $LOCKDIR;echo \$?"
-        RES=`ssh $TARGET $COMMAND`
-        if [ "$RES" = "0" ] ; then
-            LS=`ls -l --time-style="+%Y%m%d%H%M%S" $1`
-            SIZE=`echo $LS|cut -d' ' -f5`
-            MDATE=`mdate $1`
-            ABS=`abspath $1`
 
-            scp $TARGET:$MYPATH.af6 $TMP/$MD5.af6_0 2>/dev/null
+        RES=`ssh -n $TARGET $COMMAND`
+        if [ "$RES" = "0" ] ; then
+            LS=`ls -l --time-style="+%Y%m%d%H%M%S" $THISFILE`
+            SIZE=`echo $LS|cut -d' ' -f5`
+            MDATE=`mdate $THISFILE`
+            ABS=`abspath $THISFILE`
+
+            scp $TARGET:$MYPATH.af6 $TMP/$MD5.af6_0 >/dev/null 2>&1
 
             echo "$MD5;$SIZE;$MDATE;$HOST;\"$ABS\"" >> $TMP/$MD5.af6_0
             sort < $TMP/$MD5.af6_0 > $TMP/$MD5.af6_1
             uniq < $TMP/$MD5.af6_1 > $TMP/$MD5.af6
 
-            NUMTARGET=`ssh $TARGET ls $MYPATH $MYPATH.bz2 2>/dev/null|wc -l`
+            NUMTARGET=`ssh -n $TARGET ls $MYPATH $MYPATH.bz2 2>/dev/null|wc -l`
             if [ "$NUMTARGET" = "0" ] ; then
                 echo "DOBACKUP file $ABS"                          |tee -a $TMP/mail |logger -s -puser.info -t$BASE.$$
-                bzip2 --best --stdout --force $1 > $TMP/$MD5.bz2
+                bzip2 --best --stdout --force $THISFILE > $TMP/$MD5.bz2
                 BZSIZE=`ls -l $TMP/$MD5.bz2|cut -d' ' -f5`  
 	        
                 if [ $SIZE -gt $BZSIZE ] ; then
                     echo "BZIPPED file $ABS. ($SIZE > $BZSIZE)"    |tee -a $TMP/mail |logger -s -puser.info -t$BASE.$$
-                    scp $TMP/$MD5.af6 $TMP/$MD5.bz2 $TARGET:$TODIR/$MD51/$MD52/$MD53 
+                    scp $TMP/$MD5.af6 $TMP/$MD5.bz2 $TARGET:$TODIR/$MD51/$MD52/$MD53                   >/dev/null 2>&1
                 else
                     echo "COPIED  file $ABS. ($SIZE)"              |tee -a $TMP/mail |logger -s -puser.info -t$BASE.$$
-                    scp $TMP/$MD5.af6  $TARGET:$TODIR/$MD51/$MD52/$MD53  
-                    scp $1 $TARGET:$MYPATH 2>&1
+                    scp $TMP/$MD5.af6  $TARGET:$TODIR/$MD51/$MD52/$MD53                                >/dev/null 2>&1
+                    scp $THISFILE $TARGET:$MYPATH                                                      >/dev/null 2>&1
                 fi
             else
                 echo "ALREADYDONE file $ABS"                       |tee -a $TMP/mail |logger -s -puser.info -t$BASE.$$
-                diff $TMP/$MD5.af6_0 $TMP/$MD5.af6
+                diff $TMP/$MD5.af6_0 $TMP/$MD5.af6                                                     >/dev/null 2>&1  
                 if [ "$?" -ne "0" ] ; then
-                    scp $TMP/$MD5.af6 $TARGET:$TODIR/$MD51/$MD52/$MD53    
+                    scp $TMP/$MD5.af6 $TARGET:$TODIR/$MD51/$MD52/$MD53                                 >/dev/null 2>&1  
                 fi
             fi
 
-            ssh $TARGET "rmdir $LOCKDIR"
+            ssh -n $TARGET "rmdir $LOCKDIR"
         fi
-    fi
+      done < $TMP/file.lst
 }
 ############################################################
 # stats & send mail
@@ -169,11 +163,11 @@ af6_end () {
             cat $TMP/mail                    >> $TMP/mail2
             ssh $TARGET sendmail -t           < $TMP/mail2
         fi
-        #rm -rf $TMP
+        rm -rf $TMP
         exit $1
     else 
         cat $TMP/mail        
-        #rm -rf $TMP
+        rm -rf $TMP
     fi
 }
 #############################################################
