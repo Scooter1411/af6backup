@@ -90,7 +90,7 @@ af6_backup () {
 
         RES=`ssh -n $TARGET $COMMAND`
         if [ "$RES" = "0" ] ; then
-            LS=`ls -l --time-style="+%Y%m%d%H%M%S" $THISFILE`
+            LS=`ls -l $THISFILE`
             SIZE=`echo $LS|cut -d' ' -f5`
             MDATE=`mdate $THISFILE`
             ABS=`abspath $THISFILE`
@@ -101,20 +101,21 @@ af6_backup () {
             sort < $TMP/$MD5.af6_0 > $TMP/$MD5.af6_1
             uniq < $TMP/$MD5.af6_1 > $TMP/$MD5.af6
 
-            NUMTARGET=`ssh -n $TARGET ls $MYPATH $MYPATH.bz2 2>/dev/null|wc -l`
+            NUMTARGET=`ssh -n $TARGET ls $MYPATH $MYPATH.bz2 2>/dev/null|wc -l|sed -e's+ ++g'`
             if [ "$NUMTARGET" = "0" ] ; then
                 echo "DOBACKUP file $ABS"                          |tee -a $TMP/mail |logger -s -puser.info -t$BASE.$$
-                bzip2 --best --stdout --force $THISFILE > $TMP/$MD5.bz2
-                BZSIZE=`ls -l $TMP/$MD5.bz2|cut -d' ' -f5`  
+                bzip2 --best --stdout --force $THISFILE > $MD5.bz2
+                BZSIZE=`ls -l $MD5.bz2|cut -d' ' -f5`  
 	        
                 if [ $SIZE -gt $BZSIZE ] ; then
                     echo "BZIPPED file $ABS. ($SIZE > $BZSIZE)"    |tee -a $TMP/mail |logger -s -puser.info -t$BASE.$$
-                    scp $TMP/$MD5.af6 $TMP/$MD5.bz2 $TARGET:$TODIR/$MD51/$MD52/$MD53                   >/dev/null 2>&1
+                    scp $TMP/$MD5.af6 $MD5.bz2 $TARGET:$TODIR/$MD51/$MD52/$MD53                        >/dev/null 2>&1
                 else
                     echo "COPIED  file $ABS. ($SIZE)"              |tee -a $TMP/mail |logger -s -puser.info -t$BASE.$$
                     scp $TMP/$MD5.af6  $TARGET:$TODIR/$MD51/$MD52/$MD53                                >/dev/null 2>&1
                     scp $THISFILE $TARGET:$MYPATH                                                      >/dev/null 2>&1
                 fi
+                rm $MD5.bz2
             else
                 echo "ALREADYDONE file $ABS"                       |tee -a $TMP/mail |logger -s -puser.info -t$BASE.$$
                 diff $TMP/$MD5.af6_0 $TMP/$MD5.af6                                                     >/dev/null 2>&1  
@@ -213,6 +214,10 @@ af6_fromcron () {
         af6_backup /2data/lost+found
         af6_backup /3data/lost+found
             
+    elif [ "$HOST" = "quagga" ] ; then
+        export LAZY="-mtime -3"
+
+        af6_backup /share/MD0_DATA/Public/Fotos/2014     
     else
         af6_backup /home/ich
     fi
