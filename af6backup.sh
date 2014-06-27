@@ -48,13 +48,13 @@ abspath () {
 mdate () {
     if [ -f $1 ] ; then 
         _LS=`ls -l --time-style="+%Y%m%d%H%M%S" $1 2>/dev/null`
-        _MDATE=`echo $_LS|cut -d' ' -f6`
+        _MDATE=`echo $_LS|awk '{print $6}'`
         if [ -z "$_MDATE" ] ; then
             _LS=`ls -le $1 2>/dev/null`
-            _Y=`echo $_LS|cut -d' ' -f10`
-            _MO=`echo $_LS|cut -d' ' -f7|sed -e's+Jan+01+' -e's+Feb+02+' -e's+Mar+03+' -e's+Apr+04+' -e's+Ma.+05+' -e's+Jun+06+' -e's+Jul+07+' -e's+Aug+08+' -e's+Sep+09+' -e's+O.t+10+' -e's+Nov+11+' -e's+De.+12+'`
-            _D=`echo $_LS|cut -d' ' -f8|awk '{printf("%02d",\$0)}'`
-            _T=`echo $_LS|cut -d' ' -f9|sed -e's+:++g'`
+            _Y=`echo $_LS|awk '{print $10}'`
+            _MO=`echo $_LS|awk '{print $7}'|sed -e's+Jan+01+' -e's+Feb+02+' -e's+Mar+03+' -e's+Apr+04+' -e's+Ma.+05+' -e's+Jun+06+' -e's+Jul+07+' -e's+Aug+08+' -e's+Sep+09+' -e's+O.t+10+' -e's+Nov+11+' -e's+De.+12+'`
+            _D=`echo $_LS|awk '{printf("%02d",\$8)}'`
+            _T=`echo $_LS|awk '{print $9}'|sed -e's+:++g'`
             _MDATE=`echo $_Y$_MO$_D$_T`
         fi 
         echo $_MDATE
@@ -78,7 +78,7 @@ af6_backup () {
 
     while read THISFILE
       do
-        MD5=`md5sum $THISFILE|cut -d' ' -f1`
+        MD5=`md5sum $THISFILE|awk '{print $1}'`
 
         MD51=`echo $MD5|cut -c1,1`
         MD52=`echo $MD5|cut -c2,2`
@@ -91,7 +91,7 @@ af6_backup () {
         RES=`ssh -n $TARGET $COMMAND`
         if [ "$RES" = "0" ] ; then
             LS=`ls -l $THISFILE`
-            SIZE=`echo $LS|cut -d' ' -f5`
+            SIZE=`echo $LS|awk '{print $5}'`
             MDATE=`mdate $THISFILE`
             ABS=`abspath $THISFILE`
 
@@ -105,7 +105,7 @@ af6_backup () {
             if [ "$NUMTARGET" = "0" ] ; then
                 echo "DOBACKUP file $ABS"                          |tee -a $TMP/mail |logger -s -puser.info -t$BASE.$$
                 bzip2 --best --stdout --force $THISFILE > $MD5.bz2
-                BZSIZE=`ls -l $MD5.bz2|cut -d' ' -f5`  
+                BZSIZE=`ls -l $MD5.bz2|awk '{print $5}'`  
 	        
                 if [ $SIZE -gt $BZSIZE ] ; then
                     echo "BZIPPED file $ABS. ($SIZE > $BZSIZE)"    |tee -a $TMP/mail |logger -s -puser.info -t$BASE.$$
@@ -217,7 +217,13 @@ af6_fromcron () {
     elif [ "$HOST" = "quagga" ] ; then
         export LAZY="-mtime -3"
 
-        af6_backup /share/MD0_DATA/Public/Fotos/2014     
+        af6_backup /share/MD0_DATA/Public/MuflonScan
+        af6_backup /share/MD0_DATA/Public/Musik
+        af6_backup /share/MD0_DATA/Public/Fotos   
+        af6_backup /share/MD0_DATA/Public/Video 
+        af6_backup /share/MD0_DATA/Public/dataIch  
+        af6_backup /share/MD0_DATA/Public/dataAstrid
+        af6_backup /share/MD0_DATA/Public/dataChiara
     else
         af6_backup /home/ich
     fi
