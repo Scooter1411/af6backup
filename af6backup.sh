@@ -224,8 +224,12 @@ af6_fromcron () {
         af6_backup /share/MD0_DATA/Public/dataIch  
         af6_backup /share/MD0_DATA/Public/dataAstrid
         af6_backup /share/MD0_DATA/Public/dataChiara
+    elif [ "$HOST" = "drache" ] ; then
+        export LAZY="-mtime -7"
+
+        af6_backup /cygdrive/c/Users/ich/Documents
     else
-        af6_backup /home/ich
+        af6_backup /home
     fi
     FROMCRON=0
     af6_end 0 
